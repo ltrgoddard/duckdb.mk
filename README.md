@@ -83,14 +83,6 @@ table and schema names are derived from filenames and directories, while
 internal references are resolved automatically (no need for dbt's
 `ref("model")`).
 
-On each run, DuckDB parses every model and test with `json_serialize_sql`. One
-SQL query over the resulting syntax trees finds table references, file paths,
-URLs and `getenv` calls, and writes them as Make rules to `build/plan.mk`. Make
-includes that file and rebuilds only the tables whose inputs are newer. Each
-Parquet file also stores a fingerprint of its query, remote sources and
-environment variables. Make rechecks remote data and settings on every run,
-but rebuilds a table only when that fingerprint changes.
-
 This project does not aim to implement the 'full fat' features of dbt like
 incremental rebuilds, automated documentation and tight integration with remote
 data warehouses. It's aimed at individual data engineers and small teams who
