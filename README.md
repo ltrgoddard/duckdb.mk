@@ -1,5 +1,7 @@
 # duckdb.mk
 
+"DuckDB and Make are all you need!"
+
 duckdb.mk is a minimal, highly opinionated build system for local DuckDB
 projects, inspired by [dbt](https://www.getdbt.com/) and implemented as a short
 Makefile. Write interlinked `SELECT` queries in an organised directory of SQL
