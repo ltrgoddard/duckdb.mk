@@ -90,7 +90,7 @@ want to build neat, reproducible data pipelines that run on a single machine.
 
 ## How to use it
 
-duckdb.mk is delivered as a single ~250-line file, which is mostly SQL.
+duckdb.mk is delivered as a single ~280-line file, which is mostly SQL.
 The recommended way to deploy it is to `include` it in your project's existing
 Makefile, alongside variable definitions and additional targets for things
 DuckDB can't do (e.g. downloading and extracting complex source data). For
@@ -100,7 +100,9 @@ the file can be renamed to `Makefile` and used directly.
 SQL queries representing tables are stored in a `models/` directory, with
 subdirectories representing (and naming) schemas. Each table definition is a
 .sql file containing a single `SELECT` statement, which can refer freely to
-other schemas and tables in the collection by name.
+other schemas and tables in the collection by name. A file named
+`table@column.sql` builds a directory with one Parquet file for each value of
+that column, and keeps the name `table`.
 
 Tests are stored in `tests/` and macros -- SQL run before every model statement
 -- in `macros/`. Built Parquet tables are stored in `build/` organised by
@@ -118,10 +120,11 @@ flowchart.
 
 `./test.sh` runs the end-to-end tests in `test/` in parallel against real `make`
 and `duckdb` executables (set `MAKE` and `DUCKDB` to try others). They cover
-rebuilds, dependency resolution, errors, remote sources over HTTP and S3, a
-pipeline over millions of generated rows and a random 300-model project checked
-against an independent model of its dependency graph. `./bench.sh [git ref ...]`
-times the working copy against earlier versions.
+rebuilds, dependency resolution, errors, partitioned models, remote sources
+over HTTP and S3, a pipeline over millions of generated rows and a random
+300-model project checked against an independent model of its dependency
+graph. `./bench.sh [git ref ...]` times the working copy against earlier
+versions.
 
 Contributions -- bug fixes, ergonomics, new features -- are encouraged. Please
 file an issue in the first instance.

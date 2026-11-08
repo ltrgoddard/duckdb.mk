@@ -44,12 +44,14 @@ e "local files" files "\$(wildcard bare.csv) data/made.csv data/x.csv"
 d glob "from read_csv('data/*.csv')"
 e "globs" glob "\$(wildcard data/*.csv) FORCE"
 d rglob "select count(*) as n from read_parquet('build/**/*.parquet', union_by_name = true)"
-e "recursive glob" rglob "\$(wildcard build/**/*.parquet) FORCE $(find models -name '*.sql' ! -name rglob.sql |
+e "recursive glob" rglob "FORCE $(find models -name '*.sql' ! -name rglob.sql |
   sed 's/^models/build/; s/sql$/parquet/' | sort | xargs)"
 d sglob "select count(*) as n from read_parquet(['build/s/*.parquet', 'build/?.parquet'])"
-e "globs over models" sglob "\$(wildcard build/?.parquet) \$(wildcard build/s/*.parquet) FORCE build/a.parquet build/s/other.parquet"
+e "globs over models" sglob "FORCE build/a.parquet build/s/other.parquet"
 d args "from read_csv('data/x.csv', columns = {'id': 'int'}, dateformat = '%d.%m.%Y')"
 e "named arguments" args "data/x.csv"
+d sqlite "from sqlite_scan('data/x.db', 't')"
+e "sqlite_scan" sqlite "data/x.db"
 d later "from read_csv('data/x.csv', names = ['s.other'], nullstr = 'y.z')"
 e "only the path argument" later "data/x.csv"
 d macro "from lookup"
@@ -95,6 +97,6 @@ is "views" "$(grep -c '\.view := ' build/plan.mk)" "$(($(find models -name '*.sq
 is "view names" "$(grep -oE '"(main"."my-model|up"."mixed|deep"."leaf)" as' build/plan.mk | sort | paste -sd' ' -)" \
   '"deep"."leaf" as "main"."my-model" as "up"."mixed" as'
 
-rm models/url.sql models/template.sql
+rm models/url.sql models/template.sql models/sqlite.sql
 echo "create table lookup as select 1 as id;" > macros.sql && mkdir macros && mv macros.sql macros/lookup.sql
 t "everything builds" "$(find models -name '*.sql' | sed 's/^models/build/; s/sql$/parquet/') test/t" -j4 all test A=1

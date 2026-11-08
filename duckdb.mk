@@ -8,6 +8,8 @@ macros := $(sort $(wildcard macros/*.sql))
 db     := $(DUCKDB) -init /dev/null -bail -list -noheader
 run    := $(db) -cmd '.output /dev/null' $(macros:%=-cmd '.read %') -cmd '.output' -c
 views   = $(foreach d,$^,$($d.view))
+by      = $($@.by)
+src     = $(if $(by),$(@:$(BUILD)/%=models/%@$(by).sql),$<)
 flags   = $(if $(findstring =,$(firstword $(MAKEFLAGS))),,$(firstword -$(MAKEFLAGS)))
 quiet   = $(findstring s,$(flags))
 recheck = $(if $(filter-out FORCE,$?)$(findstring B,$(flags)),,$(run) "$$FRESH" 2>/dev/null ||)
@@ -32,6 +34,12 @@ $(BUILD)/plan.mk: $(self) $(tree)
 $(BUILD)/%.parquet: models/%.sql $(wildcard macros) $(macros)
 	@$(recheck) { mkdir -p $(@D) && $(run) "$$MATERIALISE"; }
 
+$(filter-out %.parquet,$(models)): $(wildcard macros) $(macros)
+	@ulimit -S -n $$(ulimit -H -n); $(recheck) { rm -rf $@.tmp $@.old && \
+	  mkdir -p $(@D) && $(run) "$$MATERIALISE" && for f in $@.tmp/*/*; do \
+	  mv "$$f" "$${f%/*}/data.parquet"; done && { mv $@ $@.old 2>/dev/null; \
+	  mv $@.tmp $@ && rm -rf $@.old; }; } || { rm -rf $@.tmp; exit 1; }
+
 $(tests): test/%: tests/%.sql $(macros)
 	@$(run) "$$ASSERT"
 
@@ -43,13 +51,14 @@ define PLAN
 create table src as
 select
   *,
-  if(kind = 'models', '$(BUILD)/' || stem || '.parquet', 'test/' || stem) as target,
+  if(kind = 'models', '$(BUILD)/' || stem || if(col = '', '.parquet', ''), 'test/' || stem) as target,
+  target || if(col = '', '', '/*/data.parquet') as out,
   lower(if(stem like '%/%', split_part(stem, '/', 1), 'main')) as schema,
   lower(parse_filename(stem)) as name
 from (
   select
     filename as file,
-    unnest(regexp_extract(filename, '^(models|tests)/(.+)\.sql$$', ['kind', 'stem'])),
+    unnest(regexp_extract(filename, '^(models|tests)/(.+?)(?:@(\w+))?\.sql$$', ['kind', 'stem', 'col'])),
     json_serialize_sql(content, skip_null := true, skip_empty := true)::json as ast
   from read_text(['models/**/*.sql', 'tests/**/*.sql'])
 );
@@ -58,9 +67,9 @@ select error(file || ': ' || coalesce(ast->>'error_message', 'expected one SELEC
 from src
 where json_array_length(ast, '$$.statements') is distinct from 1;
 
-select error(file || ': use only letters, digits, _ - and / in names')
+select error(file || ': use only letters, digits, _ - and / in names, and one @column suffix in models')
 from src
-where not regexp_full_match(file, '[\w/-]+\.sql');
+where not regexp_full_match(file, '[\w/-]+\.sql|models/[\w/-]+@\w+\.sql');
 
 select error('duplicate model ' || schema || '.' || name || ': ' || string_agg(file, ', ' order by file))
 from src
@@ -96,8 +105,8 @@ where v->>'type' = 'BASE_TABLE'
 union
 select target, unnest(if(
   a->>'function_name' = 'list_value',
-  json_extract_string(a, '$$.children[*].value.value') || json_extract_string(a, '$$.arguments[*].expression.value.value'),
-  [a->>'$$.value.value']
+  json_extract_string(a, '$$.children[*].value.value') || json_extract_string(a, '$$.arguments[*].expression.literal.text'),
+  [coalesce(a->>'$$.value.value', a->>'$$.literal.text')]
 ))
 from (select target, coalesce(v->'$$.function.children[0]', v->'$$.function.arguments[0].expression') as a from node where v->>'type' = 'TABLE_FUNCTION');
 
@@ -140,7 +149,7 @@ join src as m on m.kind = 'models' and lower(s.s) = m.schema || '.' || m.name
 union
 select g.target, m.target
 from pat as g
-join src as m on m.kind = 'models' and m.target <> g.target and regexp_full_match(m.target, g.re);
+join src as m on m.kind = 'models' and m.target <> g.target and regexp_full_match(m.out, g.re);
 
 with recursive reach(target, dep) as (
   from edge
@@ -163,11 +172,11 @@ from (
   select target, 'sources', s
   from pat
   union
-  select target, 'env', coalesce(v->>'$$.children[0].value.value', v->>'$$.arguments[0].expression.value.value')
+  select target, 'env', coalesce(v->>'$$.children[0].value.value', v->>'$$.arguments[0].expression.literal.text')
   from node
   where v->>'function_name' = 'getenv'
 )
-where target like '%.parquet'
+where target not like 'test/%'
   and not regexp_matches(x, '\s');
 
 create table arc as
@@ -197,8 +206,8 @@ from (
   select kind || ' += ' || target from src
   union all
   select format(
-    '{0}.view := create schema if not exists "{1}"; create view "{1}"."{2}" as from ''{0}'';',
-    target, schema, name
+    '{0}.view := create schema if not exists "{1}"; create view "{1}"."{2}" as from ''{3}'';',
+    target, schema, name, out
   )
   from src
   where kind = 'models'
@@ -208,8 +217,11 @@ from (
   select target || ': ' || if(regexp_matches(s, '[*?]') or not contains(s, '/'), '$$(wildcard ' || s || ')', s)
   from str
   where regexp_full_match(s, '[\w./*?~-]+\.\w+')
+    and not starts_with(s, '$(BUILD)/')
   union all
   select target || ': FORCE' from vol
+  union all
+  select unnest([target || ': ' || file, target || '.by := ' || col]) from src where col <> ''
   union all
   select target || '.' || k || ' += ' || replace(replace(replace(x, '''', ''''''), '$$', '$$$$'), '#', '\#')
   from vol
@@ -219,7 +231,7 @@ endef
 
 define PRELUDE
 $(views)
-set variable sql = (select content from read_text('$<'));
+set variable sql = (select content from read_text('$(src)'));
 set variable fp = md5(concat_ws(
   chr(10),
   getvariable('sql'),
@@ -238,16 +250,25 @@ define FRESH
 $(PRELUDE)
 select error('stale')
 where getvariable('fp') is distinct from (
-  select decode(value)
-  from parquet_kv_metadata('$@')
+  select string_agg(distinct decode(value), '')
+  from parquet_kv_metadata('$@$(if $(by),/*/data.parquet)')
   where decode(key) = 'duckdb.mk'
 );
 endef
 
 define MATERIALISE
 $(PRELUDE)
-copy (from query(getvariable('sql'))) to '$@' (format parquet, use_tmp_file true, kv_metadata {'duckdb.mk': getvariable('fp')});
-$(if $(quiet),,select format('{}: {:,} rows', '$@', count(*)) from '$@';)
+set partitioned_write_max_open_files = 1e9;
+copy (from query(getvariable('sql'))) to '$@$(if $(by),.tmp)' (format parquet, write_partition_columns true,
+  $(if $(by),partition_by "$(by)",use_tmp_file true), kv_metadata {'duckdb.mk': getvariable('fp')});
+$(if $(by),$(ONE))
+$(if $(quiet),,select format('{}: {:,} rows', '$@', count(*)) from '$(if $(by),$@.tmp/*/*.parquet,$@)';)
+endef
+
+define ONE
+select error(format('{}: {:,} files for {:,} partitions, expected one each', '$@', count(*), count(distinct parse_dirpath(file))))
+from glob('$@.tmp/*/*')
+having count(*) = 0 or count(*) > count(distinct parse_dirpath(file));
 endef
 
 define ASSERT
