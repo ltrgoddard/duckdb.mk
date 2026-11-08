@@ -26,7 +26,8 @@ All directories are optional. Run `make` from the project root.
 
 Set them before the `include` or on the command line. `PARQUET` can also be
 set for one model or a group of them with a target-specific variable:
-`build/geo/%: PARQUET = row_group_size 10000`.
+`build/geo/%: PARQUET = row_group_size 10000`. A changed option does not
+rebuild a model: run `make -B` on the models it applies to.
 
 ## Targets
 
