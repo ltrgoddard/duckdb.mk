@@ -22,8 +22,11 @@ All directories are optional. Run `make` from the project root.
 | -------- | -------- | --------------------------- |
 | `DUCKDB` | `duckdb` | DuckDB executable           |
 | `BUILD`  | `build`  | Output directory            |
+| `PARQUET` | none    | Extra Parquet writer options, e.g. `compression zstd, row_group_size 10000` |
 
-Set them before the `include` or on the command line.
+Set them before the `include` or on the command line. `PARQUET` can also be
+set for one model or a group of them with a target-specific variable:
+`build/geo/%: PARQUET = row_group_size 10000`.
 
 ## Targets
 
@@ -110,7 +113,7 @@ on:
 | Anything in `macros/`                | Every model and test                    |
 
 Strings count where DuckDB reads them as sources: as a table name
-(`from 'data/x.csv'`) or as the first argument of a table function, alone or in
+(`from 'data/x.csv'`) or as an argument of a table function, alone or in
 a list (`read_csv(['a.csv', 'b.csv'])`). A URL built at run time, such as
 `'https://example.org/?key=' || getenv('KEY')`, is not checked, but the
 variable is. A path in `$(BUILD)` depends only on the model that writes it.

@@ -1,5 +1,6 @@
 DUCKDB ?= duckdb
 BUILD  ?= build
+, := ,
 
 self   := $(lastword $(MAKEFILE_LIST))
 tree   := $(shell find models tests ! -path '* *' \( -type d -o -name '*.sql' \) 2>/dev/null)
@@ -108,7 +109,7 @@ select target, unnest(if(
   json_extract_string(a, '$$.children[*].value.value') || json_extract_string(a, '$$.arguments[*].expression.literal.text'),
   [coalesce(a->>'$$.value.value', a->>'$$.literal.text')]
 ))
-from (select target, coalesce(v->'$$.function.children[0]', v->'$$.function.arguments[0].expression') as a from node where v->>'type' = 'TABLE_FUNCTION');
+from (select target, unnest(json_extract(v, '$$.function.children[*]') || json_extract(v, '$$.function.arguments[*].expression')) as a from node where v->>'type' = 'TABLE_FUNCTION');
 
 create table pat as
 select
@@ -182,6 +183,7 @@ where target not like 'test/%'
 create table arc as
 select dep as d, target as t from edge where dep is not null
 union select s, target from str where regexp_full_match(s, '[\w./*?~-]+\.\w+')
+  and lower(s) not in (select schema || '.' || name from src)
 union select x, target from vol where k = 'sources';
 
 create table vert as
@@ -218,6 +220,7 @@ from (
   from str
   where regexp_full_match(s, '[\w./*?~-]+\.\w+')
     and not starts_with(s, '$(BUILD)/')
+    and lower(s) not in (select schema || '.' || name from src)
   union all
   select target || ': FORCE' from vol
   union all
@@ -259,7 +262,7 @@ endef
 define MATERIALISE
 $(PRELUDE)
 set partitioned_write_max_open_files = 1e9;
-copy (from query(getvariable('sql'))) to '$@$(if $(by),.tmp)' (format parquet, write_partition_columns true,
+copy (from query(getvariable('sql'))) to '$@$(if $(by),.tmp)' (format parquet, write_partition_columns true, $(if $(PARQUET),$(PARQUET)$(,))
   $(if $(by),partition_by "$(by)",use_tmp_file true), kv_metadata {'duckdb.mk': getvariable('fp')});
 $(if $(by),$(ONE))
 $(if $(quiet),,select format('{}: {:,} rows', '$@', count(*)) from '$(if $(by),$@.tmp/*/*.parquet,$@)';)
