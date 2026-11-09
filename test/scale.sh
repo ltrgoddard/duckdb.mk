@@ -42,6 +42,8 @@ all=$(cut -d' ' -f1 expected_values | xargs)
 dependents() { for m; do grep "^$m " dependents | cut -d' ' -f2-; done | xargs -n1 | sort -u | xargs; }
 
 is "plan edges" "$(deps >/dev/null; grep -E '^build/.*\.parquet: build/' build/plan.mk | sort)" "$(cat expected_edges)"
+lim="set memory_limit = '300MB'; set max_temp_directory_size = '0B'"
+is "plan in 300 MB" "$(rm build/plan.mk; $MAKE -s DUCKDB="$DUCKDB -cmd \"$lim\"" build/plan.mk 2>&1)" ""
 is "no other prerequisites" "$(grep -E '^build/.*\.parquet: ' build/plan.mk | grep -vE ': (build/|\$\(wildcard )')" ""
 t "parallel build" "$all" -j4
 is "values" "$(q "select concat_ws(' ', filename, n) from read_parquet('build/**/*.parquet', filename = true) order by 1")" \

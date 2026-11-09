@@ -80,7 +80,7 @@ having count(*) > 1;
 
 create table node as
 select target, id, path, fullkey as loc, value as v
-from src, json_tree(ast)
+from src, (from json_tree(src.ast))
 where json_extract_string(value, '$$.type') in ('BASE_TABLE', 'TABLE_FUNCTION')
   or json_extract_string(value, '$$.function_name') = 'getenv'
   or path like '%.cte_map.map';
