@@ -445,13 +445,14 @@ const ctesAbove = (tokens, at, bracket, scope) => {
 // the sql that gives the rows at a clause, with the ctes that it can read:
 // a list of tries, the first of which that runs is shown. a with, a union
 // or a pivot is its whole query, and an order or a limit after a union is
-// the union's, to the next clause
+// the union's, to the next clause. a bracket (-1 for the top) is its query
 const queryAt = (tokens, at) => {
-  const bracket = tokens[at].parent, scope = scopeOf(tokens, bracket)
-  const word = tokens[at].word, whole = word === "with" ||
+  const open = at < 0 || tokens[at].text === "("
+  const bracket = open ? at : tokens[at].parent, scope = scopeOf(tokens, bracket)
+  const word = tokens[at]?.word, whole = open || word === "with" ||
     SET_OPERATIONS.has(word) ||
     PIVOTS.has(tokens[scope.clauses.find(n => n >= scope.mainAt)]?.word)
-  const tail = isTail(tokens, scope, at)
+  const tail = !open && isTail(tokens, scope, at)
   const tries = whole || tail ? [textOf(tokens, scope.mainAt, whole ? scope.end
     : scope.clauses.find(n => n > at) ?? scope.end)]
     : clauseTries(tokens, at, scope)
@@ -906,10 +907,9 @@ const FIRST_ROWS = new RegExp("^\\(?the row's place (?:within each (.+?) )?" +
 const steps = (tokens, ref) => {
   const context = {tokens, ref, windows: namedWindows(tokens), made: [],
     letters: 0, names: new Set}
-  const main = planQuery(context, -1, 0), scope = scopeOf(tokens, -1)
+  const main = planQuery(context, -1, 0)
   return context.made.length ? [...context.made, {depth: 0, text: "Then:",
-    at: scope.clauses.find(n => n >= scope.mainAt)},
-    ...main.map(step => ({...step, depth: step.depth + 1}))] : main
+    at: -1}, ...main.map(step => ({...step, depth: step.depth + 1}))] : main
 }
 // the windows that a window clause names: the "(" of each, by its name
 const namedWindows = tokens => {
@@ -943,7 +943,7 @@ const subqueryName = (context, bracket, name) => {
   name ??= String.fromCharCode(65 + context.letters++)
   context.names.add(name.toLowerCase())
   context.made.push({depth: 0, text: `Make table ${markName(name)}:`,
-    at: scopeOf(tokens, bracket).clauses[0]}, ...inner)
+    at: bracket}, ...inner)
   return markName(name)
 }
 // the steps of the query in a bracket (-1 for the top), at a depth: its
@@ -965,7 +965,7 @@ const planQuery = (context, bracket, depth) => {
     while (/^(all|distinct|by|name)$/.test(tokens[inner]?.word))
     if (!own.length) return queryBracket(tokens, inner, end) < 0 ||
       addStep(part, lead.slice(0, -1) + " " + subqueryName(context, inner),
-        n ? start : scopeOf(tokens, inner).clauses[0])
+        n ? start : inner)
     if (sets.length) addStep(part, lead, n ? start : own[0]), part.depth++
     planPart(part)
   })
@@ -1074,10 +1074,11 @@ const pivotStep = (part, at) => {
 const fromSteps = (part, at) => {
   const [from, to] = clauseBody(part, at)
   splitAtCommas(part.tokens, from, to, part.bracket).forEach((table, n) => {
-    if (n) return addStep(part, pairStep(part, table), at)
-    const text = tableOrQuery(part, ...table)
-    addStep(part, (/^the (\S+ )?files? at /.test(text) ? "Read "
-      : "Start from ") + text, at)
+    const text = n ? pairStep(part, table) : unnestStep(part, table) ??
+      tableOrQuery(part, ...table)
+    addStep(part, (n || /^Make /.test(text) ? ""
+      : /^the (\S+ )?files? at /.test(text) ? "Read " : "Start from ") + text,
+      at)
   })
 }
 // a join: its kind, its table and its condition, then each table after a
@@ -1271,13 +1272,14 @@ const handWritten = (part, bracket, values) => {
 }
 // a table after a comma: each of its rows with each row so far, or, for an
 // unnest, a row for each item of a list
-const pairStep = (part, [from, to]) => {
+const pairStep = (part, table) => unnestStep(part, table) ??
+  "Pair each row with every row of " + tableOrQuery(part, ...table)
+const unnestStep = (part, [from, to]) => {
   const {context, tokens} = part
   if (tokens[next(tokens, from - 1)].word === "lateral")
     from = next(tokens, from - 1) + 1
   const start = next(tokens, from - 1), paren = next(tokens, start)
-  if (tokens[start].word !== "unnest" || tokens[paren]?.text !== "(")
-    return "Pair each row with every row of " + tableOrQuery(part, from, to)
+  if (tokens[start].word !== "unnest" || tokens[paren]?.text !== "(") return
   const alias = next(tokens, next(tokens, tokens[paren].close))
   return "Make a row for each of " +
     words(context, paren + 1, tokens[paren].close) +
@@ -1599,6 +1601,8 @@ await Promise.all([...new Set(nodes.flatMap(node => [...node.files,
 // geometry of them: duckdb-wasm's own conversion fails on a file whose
 // metadata names no crs ("stoi: no conversion")
 await query("set enable_geoparquet_conversion = false")
+// icu, for times with a zone: the shell has it built in
+await query("load icu").catch(error => console.warn(error.message))
 await query("create macro getenv(k) as coalesce(getvariable(k), '')")
 for (const node of nodes) {
   const header = node.sql.match(/^(--( .*)?\n)*/)[0]

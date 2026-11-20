@@ -36,7 +36,10 @@ model and a test for every assumption.
    Read it when this skill does not answer a question.
 2. Check the DuckDB version with `duckdb --version`. duckdb.mk needs 1.4 or
    later. DuckDB 2.0 rejects `x -> x + 1` lambdas by default; write
-   `lambda x: x + 1`, which works from 1.4.
+   `lambda x: x + 1`, which works from 1.4. When an agent runs it, DuckDB 2.0
+   prints a notice and gives errors as JSON: add `-no-agent` to your own
+   `duckdb` commands for the usual output. duckdb.mk's output is not
+   affected.
 3. Read the existing models, tests and macros before you add any. Follow the
    project's schemas and names.
 
@@ -85,12 +88,14 @@ Define extra targets after the `include`, so that `all` stays the default.
 ## Write models
 
 **Write exactly one `SELECT` statement in each file.** The plan rejects
-`CREATE`, `INSERT`, `SET` and more than one statement. DuckDB cannot yet
-serialise `PIVOT`, even in a subquery; pivot with aggregate `filter` clauses:
+`CREATE`, `INSERT`, `SET` and more than one statement. When you split a
+script, each `create table ... as` becomes a model, and so does each view and
+each temporary table that a later statement reads; each `create macro` goes
+in `macros/`; a `set variable` becomes a one-row CTE. A `PIVOT` must list
+its values, because DuckDB cannot serialise one that finds them in the data:
 
 ```sql
-select plant, sum(mwh) filter (where fuel = 'gas') as gas_mwh
-from generation group by plant
+pivot generation on fuel in ('gas', 'coal') using sum(mwh) group by plant
 ```
 
 **Refer to other models by name.** Write `from census.counties`, or
@@ -133,9 +138,17 @@ builds one file for each value of `cell` under `build/eog/detections/` and
 keeps the name `eog.detections`. A partitioned model that returns no rows
 fails.
 
+**Give an order where the result depends on it.** Each table is a file that
+DuckDB reads with several threads, so rows have no fixed order between
+builds. Write the `order by` in `row_number() over (...)`, `first(x order
+by ...)`, `list(x order by ...)` and before a `limit`.
+
 **Keep macros small.** Every file in `macros/` runs before every model and
 test, and a change to one rebuilds everything. Use macros for shared
-functions (`create macro`) and for `install` and `load` of extensions.
+functions (`create macro`) and for `install` and `load` of extensions. A
+macro cannot read a model: DuckDB 2.0 looks up a macro's tables when it
+creates the macro, before any model has a view. Join the table in the model,
+or give a table macro the table's name (see the tests below).
 
 ## Write tests
 
@@ -160,7 +173,8 @@ For rules that repeat, define table macros in `macros/tests.sql`:
 ```sql
 -- rows where any column matching the pattern p is null
 create macro nulls(t, p) as table
-  from query_table(t) where list_count([*columns(p)]) < len([*columns(p)]);
+  from query_table(t)
+  except all from query_table(t) where columns(p) is not null;
 -- values of k that occur more than once
 create macro dupes(t, k) as table
   select k, count(*) as n from query_table(t) group by all having n > 1;
@@ -174,7 +188,8 @@ from nulls('main.plants', '_id$')
 Give the table name with its schema (`'main.plants'`, not `'plants'`), so
 that duckdb.mk sees the dependency. Do not write `where columns(p) is null`:
 DuckDB joins the expanded conditions with `AND`, so it finds rows where every
-matched column is null, not any.
+matched column is null, not any. Write one rule in each test file: a failing
+test shows its three smallest rows, which can all be from one rule.
 
 ## Inputs that DuckDB cannot fetch
 
@@ -192,7 +207,7 @@ data/osm.json: queries/osm.overpassql
 
 A rule can also run another program between two models: depend on the
 upstream table (`build/x.parquet`) and write a file that a downstream model
-reads.
+reads. The rule runs again each time the upstream table is written.
 
 ## Variables and secrets
 
@@ -221,7 +236,7 @@ Follow these steps after every change:
    example rows, and stops.
 3. **Look at the rows.** Query a table directly:
    `duckdb -c "summarize from 'build/matches.parquet'"`, or open `make shell`
-   for a view of every model. Check null counts, ranges and distinct values
+   for a view of every built model. Check null counts, ranges and distinct values
    for the columns that you changed.
 4. **Check what built a table.** Each table stores the SQL that built it and
    the git commit:
@@ -231,14 +246,15 @@ Follow these steps after every change:
    could not build, and why.
 
 To rebuild one table, `touch` its model's file and run `make`.
-`make -B` rebuilds a target and everything it depends on. To see what would
-run, use `make -n`.
+`make -B` rebuilds a target and everything it depends on.
 
 ## Common problems
 
 | Symptom | Cause | Fix |
 | ------- | ----- | --- |
-| `Only SELECT statements can be serialized to json` | A model or test holds `CREATE`, `SET` or another statement | Move setup into `macros/`; keep one `SELECT` per file |
+| `Only SELECT statements can be serialized to json` | A model or test holds `CREATE`, `SET` or another statement, or a `PIVOT` with no `in` list | Move setup into `macros/`; keep one `SELECT` per file; list the pivot's values |
+| `Table with name x does not exist` for every model, at a line of a macro | A macro reads a model | Join the table in the model, or pass its name to a table macro |
+| A table is not rebuilt after its input file changed | The model builds the file's path from a variable, so only the variable is checked | Name the file literally, or add it in the Makefile: `build/x.parquet: data/x.csv` |
 | `expected one SELECT statement` | More than one statement in a file | Split it into models |
 | A table is not rebuilt after an edit | The edit fell in the same second as the build; Make 3.81 compares whole seconds | `touch` the model's file and run `make`; the inspector shows the table in italics |
 | A model runs before its input exists | The path is built at run time | Write the path as a literal, or use `getenv` |

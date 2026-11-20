@@ -4,8 +4,9 @@ echo "select range % 3 as cell, range as v from range(10)" > models/eog/detectio
 echo "select cell, count(*) as n from eog.detections group by all" > models/counts.sql
 echo "select count(*) as n from read_parquet('build/eog/detections/*/data.parquet')" > models/glob.sql
 echo "select count(*) as n from 'build/eog/detections/cell=*/data.parquet'" > models/hive.sql
+echo "select count(*) as n from 'build/eog/detections/cell=1/data.parquet'" > models/one.sql
 echo "from eog.detections where cell not between 0 and 2" > tests/cells.sql
-all="build/counts.parquet build/eog/detections build/glob.parquet build/hive.parquet"
+all="build/counts.parquet build/eog/detections build/glob.parquet build/hive.parquet build/one.parquet"
 files() { (cd build/eog/detections && find . -type f | sort | xargs); }
 cells() { q "select string_agg(distinct cell, ' ' order by cell) from '$1'"; }
 
@@ -19,6 +20,7 @@ is "reference by name" "$(q "select string_agg(cell || ':' || n, ' ' order by ce
   "0:4 1:3 2:3"
 is "reference by glob" "$(deps build/glob.parquet)" "FORCE build/eog/detections"
 is "reference by a glob of its values" "$(deps build/hive.parquet)" "FORCE build/eog/detections"
+is "reference by one value's file" "$(deps build/one.parquet)" "build/eog/detections"
 is "shell" "$(printf '.mode list\n.headers off\nselect count(*) from eog.detections;' | $MAKE -s shell)" 10
 t "no-op" ""
 t "no-op test run" "test/cells" test

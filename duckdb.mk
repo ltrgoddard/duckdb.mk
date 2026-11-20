@@ -48,8 +48,8 @@ $(filter-out %.parquet,$(models)): $(wildcard macros) $(macros)
 $(tests): test/%: tests/%.sql $(macros)
 	@$(run) "$$PRELUDE" -c "$$ASSERT ($(sql)$$PASS"
 
-shell: export VIEWS = $(views)
-shell: $(models)
+shell: export VIEWS = $(foreach m,$(models),$(if $(wildcard $m),$($m.view)))
+shell:
 	@$(DUCKDB) $(macros:%=-cmd '.read %') -cmd "$$VIEWS"
 
 inspect: $(page)
@@ -160,7 +160,7 @@ where not regexp_matches(r.name, '[./]')
 union
 select s.target, m.target
 from str as s
-join src as m on m.kind = 'models' and s.s = m.target
+join src as m on m.kind = 'models' and starts_with(s.s || '/', m.target || '/')
 union
 select s.target, m.target
 from str as s
@@ -252,7 +252,8 @@ from (
   select target || ': ' || if(regexp_matches(s, '[*?=]') or not contains(s, '/'), '$$(wildcard ' || s || ')', s)
   from str
   where regexp_full_match(s, '[\w./*?~=-]+\.\w+')
-    and not starts_with(s, '$(BUILD)/')
+    and not (starts_with(s, '$(BUILD)/') and (regexp_matches(s, '[*?]')
+      or exists (from src as m where starts_with(s || '/', m.target || '/'))))
     and lower(s) not in (select schema || '.' || name from src)
   union all
   select target || ': FORCE' from vol

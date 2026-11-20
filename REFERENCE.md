@@ -39,13 +39,13 @@ rebuild a model: run `make -B` on the models it applies to.
 | `$(BUILD)/<path>`        | Build one partitioned model and its dependencies     |
 | `test`                   | Build the models that tests need, then run all tests |
 | `test/<path>`            | Run one test                                         |
-| `shell`                  | Build every model, then open DuckDB with macros and a view per model |
+| `shell`                  | Open DuckDB with the macros and a view of each built model; build nothing |
 | `inspect`                | Write the inspector's page to `$(INSPECT)`; build nothing |
 | `serve`                  | Write the page, then serve it on port 8000           |
 | `clean`                  | Remove `$(BUILD)`                                    |
 
-Standard Make flags apply: `-j` builds in parallel, `-s` hides row counts and
-test passes, `-n` shows what would run.
+Standard Make flags apply: `-j` builds in parallel, and `-s` hides row counts
+and test passes.
 
 Every run also writes the dependency graph to `$(BUILD)/dag.mmd` as a
 [Mermaid](https://mermaid.js.org) flowchart of models, tests and sources.
@@ -78,10 +78,10 @@ build/eog/detections/cell=1/data.parquet
   `'build/eog/detections/*/data.parquet'` returns it without
   `hive_partitioning`. Directory names hold the values as DuckDB writes them:
   percent-encoded, with `__HIVE_DEFAULT_PARTITION__` for null.
-- Refer to the model by name (`from eog.detections`) or with a glob over its
+- Refer to the model by name (`from eog.detections`), with a glob over its
   files, such as `'build/eog/detections/*/data.parquet'` or
-  `'build/**/*.parquet'`. A path to one partition, such as
-  `'build/eog/detections/cell=1/data.parquet'`, is not a dependency.
+  `'build/**/*.parquet'`, or by the path of one partition, such as
+  `'build/eog/detections/cell=1/data.parquet'`.
 - Every file stores the fingerprint. The build writes to `$(BUILD)/<path>.tmp`
   and then replaces the directory, so a failed build keeps the previous
   partitions and a rebuild leaves no stale ones.
@@ -108,6 +108,7 @@ on:
 | ------------------------------------ | --------------------------------------- |
 | `schema.table` or `table`            | The matching model (`main` if no schema) |
 | `'build/x.parquet'` or `'schema.table'` as a string | The matching model       |
+| Another path in `$(BUILD)`, e.g. `'build/solve.csv'` | That file; a Make rule can create it |
 | A local file path, e.g. `'data/x.csv'` or `sqlite_scan('data/x.db', 't')` | That file; a Make rule can create it |
 | A bare filename, e.g. `'x.csv'`      | `$(wildcard ...)` of it                 |
 | A glob, e.g. `'data/*.csv'`          | `$(wildcard ...)` of it; checked on every run |
@@ -120,7 +121,21 @@ Strings count where DuckDB reads them as sources: as a table name
 (`from 'data/x.csv'`) or as an argument of a table function, alone or in
 a list (`read_csv(['a.csv', 'b.csv'])`). A URL built at run time, such as
 `'https://example.org/?key=' || getenv('KEY')`, is not checked, but the
-variable is. A path in `$(BUILD)` depends only on the model that writes it.
+variable is.
+
+A path or a glob is a dependency if it has only letters, digits and
+`_ . / ~ - =`, and a path must also end in an extension. DuckDB reads a path
+with other characters, such as a space, but Make does not know it. A path
+outside the project is a dependency like any other.
+
+A dependency that the SQL does not show can be given in the Makefile, after
+the `include`: `build/b.parquet: build/a.parquet`. The model then has a view
+of `a` as if it had named it.
+
+A macro cannot read a model. DuckDB 2.0 looks up each table that a macro
+names when the macro is created, and no model has a view then. Give the
+table's name to a table macro as an argument (`query_table(t)`), or join the
+table in the model.
 
 CTE names shadow models of the same name within their scope, following
 DuckDB's rules. A table name that matches no model or CTE (e.g. one created in
@@ -185,13 +200,17 @@ smallest rows as examples, and stops Make.
 
 The plan stops with a message for:
 
-- A file that does not parse, or is not exactly one `SELECT` statement
-  (DuckDB cannot yet serialise `PIVOT`, even in a subquery: pivot with
-  aggregate `filter` clauses instead)
+- A file that does not parse (`models/x.sql:3: syntax error ...`, with the
+  line), or is not exactly one `SELECT` statement. `PIVOT` and `UNPIVOT`
+  count as one, but a `PIVOT` must list its values (`on fuel in ('gas',
+  'coal')`): without the list, DuckDB cannot serialise it
 - A path with characters other than letters, digits, `_`, `-` and `/`, except
   for one `@<column>` suffix on a model
 - A duplicate model name
 - A dependency cycle
+
+An error in a build or a test is DuckDB's own. Its `LINE` is the line of the
+model's or test's file.
 
 ## Include in a Makefile
 
@@ -223,14 +242,15 @@ the page, one HTML file, at the version in `DUCKDB_MK`, the first time. With a
 local copy of `duckdb.mk`, put the repository's `inspect/` directory beside
 it.
 
-The page builds no model, and make writes nothing for it but the plan.
-Each run writes `$(BUILD)/plan.mk` again, so that its lines that name the
-files of a partitioned table, and of a pattern that a model reads, are
-current, and links it beside the page. It links into `$(INSPECT)/files` the
-SQL of the models, tests and macros, every built table and every local file
-that a model names, by hard link, or by copy on another filesystem. The page
-reads the plan and these files as they are. A model without
-a table shows as not built, and its SQL and steps can still be read.
+The page builds no model. Each run writes the plan again as `plan.mk` beside
+the page, so that its lines that name the files of a partitioned table, and
+of a pattern that a model reads, are current. It links into
+`$(INSPECT)/files` the SQL of the models, tests and macros, every built
+table and every local file in the project that a model names (with a
+shapefile, the `.shx`, `.dbf`, `.prj` and `.cpg` beside it), by hard link, or
+by copy on another filesystem. The page reads the plan and these files as
+they are. A model without a table shows as not built, and its SQL and steps
+can still be read.
 `$(INSPECT)` is a static site. To publish it, set `INSPECT` to a directory of
 a site, such as `site/inspect`. To build before each write, and to write on
 each `make`:
@@ -247,8 +267,11 @@ all: inspect
 - A test shows the rows that fail it.
 - A model whose table stores SQL that differs from its file says to
   rebuild it when it is opened: its rows are from the earlier version.
-- `getenv` returns an empty string in the page. No variable's value is
-  written for it.
+- No variable's value is written for the page. A model that reads a
+  variable shows a field for it beside its file's name; `getenv` returns
+  what the viewer types there, or an empty string.
+- A step that reads a query around it (a correlated subquery, a `lateral`)
+  cannot run alone, and says so.
 - Every model and test is listed, and every table is linked: a table in a
   published page can be downloaded by its path.
 - Macros run in the browser in file order. A statement that fails there,

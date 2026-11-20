@@ -2,6 +2,7 @@
 mkdir -p models/s models/Up models/deep/er/est models/cte tests data
 cat >> Makefile <<'MK'
 data/made.csv: ; printf 'id\n1\n' > $@
+build/made.csv: build/base.parquet; printf 'id\n1\n' > $@
 MK
 printf 'id\n1\n' > data/x.csv && printf 'id\n2\n' > data/y.csv && printf 'id\n3\n' > bare.csv
 echo "select 1 as id" > models/base.sql
@@ -41,6 +42,8 @@ d path "from 'build/Up/Mixed.parquet'"
 e "model by path" path "build/Up/Mixed.parquet"
 d files "select id from read_csv('data/x.csv') union all from 'bare.csv' union all from read_csv('data/made.csv')"
 e "local files" files "\$(wildcard bare.csv) data/made.csv data/x.csv"
+d made "from 'build/made.csv'"
+e "a file in the build directory that a rule makes" made "build/made.csv"
 d glob "from read_csv('data/*.csv')"
 e "globs" glob "\$(wildcard data/*.csv) FORCE"
 mkdir -p data/y=1 && printf 'id\n4\n' > data/y=1/h.csv
