@@ -259,8 +259,10 @@ const re = new RegExp(["(--[^\\n]*|/\\*[\\s\\S]*?\\*/)",
   "(\\d[\\w.]*)", "([A-Za-z_][\\w$]*)", "(\\s+)", "([\\s\\S])"].join("|"), "g")
 const set = s => new Set(s.split(" "))
 const K = set("with select from where group having qualify order " +
-  "limit join union except intersect")
+  "limit join union except intersect pivot unpivot pivot_wider pivot_longer")
 const SET = set("union except intersect")
+// duckdb's pivot statements, a clause that starts a query
+const PIV = set("pivot unpivot pivot_wider pivot_longer")
 const MOD = set("left right inner outer full cross natural semi anti " +
   "asof positional")
 const skip = d => (ts, i) => {
@@ -279,7 +281,8 @@ const lex = s => {
   ts.forEach((x, i) => x.cl = K.has(x.w) && !(
     (x.w === "group" || x.w === "order") && ts[nx(ts, i)]?.w !== "by" ||
     x.w === "from" && ts[pv(ts, i)]?.w === "distinct" ||
-    x.w === "with" && ts[pv(ts, i)] && ts[pv(ts, i)].t !== "("))
+    (x.w === "with" || PIV.has(x.w)) && ts[pv(ts, i)] &&
+      ts[pv(ts, i)].t !== "("))
   return ts
 }
 // the text from a to b, less comments
@@ -287,7 +290,7 @@ const tx = (ts, a, b) =>
   ts.slice(a, b).map(x => x.k === "c" ? " " : x.t).join("").trim()
 // whether the bracket g holds a query
 const holds = (ts, g) =>
-  ["with", "select", "from"].includes(ts[nx(ts, g)]?.w)
+  ["with", "select", "from", ...PIV].includes(ts[nx(ts, g)]?.w)
 // the stretches between the commas of the bracket g, from a to b
 const split = (ts, a, b, g) => {
   const r = []
@@ -333,6 +336,8 @@ const glue = s => {
 const pretty = s => {
   s = glue(s)
   try {
+    // the formatter takes a pivot's list for a select's
+    if (lex(s).some(x => x.cl && PIV.has(x.w))) throw 0
     const a = [...formatDialect(s, {dialect, keywordCase: "lower",
       dataTypeCase: "lower", functionCase: "lower", expressionWidth: 72})
       .matchAll(re)], str = m => m?.[0][0] === "'"
@@ -372,7 +377,8 @@ const ctes = (ts, l, g, p) => {
 // read; a list of tries
 const part = (ts, i) => {
   const g = ts[i].o, l = level(ts, g), w = ts[i].w
-  const whole = w === "with" || SET.has(w)
+  const whole = w === "with" || SET.has(w) ||
+    PIV.has(ts[l.cl.find(j => j >= l.m)]?.w)
   let q
   if (whole) q = [tx(ts, l.m, l.b)]
   else {
@@ -748,6 +754,23 @@ const steps = (ts, ref) => {
         return "Make a row for each of " + words(p + 1, ts[p].c) +
           (ts[c]?.t === "(" && c < v ? ", as " + words(c + 1, ts[c].c) : "")
       }
+      // a pivot: a column for each of its on's values, holding its using;
+      // an unpivot: a row for each of its on's columns, with the column's
+      // name and value as its into's
+      for (const j of sc.filter(j => PIV.has(ts[j].w))) {
+        const [a, b] = body(j), kw = (w, k = a) => {
+          while (k < b && !(ts[k].o === g && ts[k].w === w)) k++
+          return k
+        }, un = /^un|longer/.test(ts[j].w), on = kw("on"), q = qg(a, on)
+        const t = q < 0 ? src([a, on]) : sub(q), u = kw(un ? "into" : "using")
+        const nm = kw("name", u), vl = kw("value", u), as = on < b ? words(
+          nx(ts, on), u) : "every column"
+        S(un ? `Make a row for each of ${as} in ${t}, with the column's ` +
+          `name as ${nm < b ? words(nx(ts, nm), vl) : "name"} and its ` +
+          `value as ${vl < b ? words(nx(ts, vl), b) : "value"}`
+          : `Make a column for each ${as} in ${t}${u < b ? ", holding " +
+          words(nx(ts, u), b) : ""}`, j)
+      }
       for (const f of at("from")) {
         const [a, b] = body(f)
         split(ts, a, b, g).forEach(([u, v], k) => {
@@ -1069,7 +1092,7 @@ const ref = m => (ts, i) => {
     glob(x.t.slice(1, -1)).test(n.out))
     : x.k !== "w" || ts[i - 1]?.t === "." ? []
     : dot ? [by[`${x.w}.${ts[i + 2].w}`.replace(/^main\./, "")]]
-    : /^(from|join)$/.test(ts.findLast((y, j) => j < i && !(y.k in
+    : /^(from|join|(un)?pivot(_wider|_longer)?)$/.test(ts.findLast((y, j) => j < i && !(y.k in
       {c: 1, _: 1}))?.w) && ts[i + 1]?.t !== "(" ? [by[x.w]] : []
   return m.reads.has(n[0]) ? {n, len: x.k === "w" && dot ? 3 : 1} : null
 }
