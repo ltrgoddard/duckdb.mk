@@ -57,7 +57,7 @@ main {
 }
 header {
   grid-area: head; padding: 16px 20px; max-height: var(--head, 50vh);
-  overflow: auto;
+  display: flex; flex-direction: column; overflow: auto;
   border-bottom: 1px solid var(--line);
 }
 h1 { margin: 0 0 4px; font: 500 18px var(--mono); }
@@ -139,7 +139,10 @@ th {
 th small { display: block; color: var(--mute); font-weight: 400; }
 .r { text-align: right; }
 /* lineage: a table's colour is its schema's; one not built is grey */
-.dag { position: relative; overflow-x: auto; margin-top: 12px; }
+/* the graph takes the header's height left over, so that its scroll bar is
+   at the foot of the pane; the header scrolls when three rows do not fit */
+.dag { position: relative; overflow: auto; margin-top: 12px; }
+body.all .dag { flex: 1; }
 .dag svg { display: block; }
 .dag path { fill: none; stroke: #3a3a3a; stroke-width: 1.2; }
 .dag:has(a:hover) path { opacity: .25; }
@@ -667,7 +670,8 @@ const dag = (ns, me) => {
   const svg = document.createElementNS(NS, "svg"), box = document
     .createElement("div"), at = n => [d.get(n) * (W + G), y.get(n) * R + R / 2]
   svg.setAttribute("width", cols.length * (W + G))
-  svg.setAttribute("height", (Math.max(...y.values()) + 1) * R)
+  const H = (Math.max(...y.values()) + 1) * R
+  svg.setAttribute("height", H), box.style.minHeight = Math.min(H, 3 * R) + "px"
   box.className = "dag", box.append(svg)
   const light = id => box.querySelectorAll("path").forEach(p =>
     p.classList.toggle("on", p.dataset.e.split(" ").includes(id)))
