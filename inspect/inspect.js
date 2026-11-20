@@ -182,7 +182,7 @@ const show = (m, s) => {
 }
 
 // a node, by the hash: its description, its file and what it reads from
-// outside the project, its lineage, then its sql and its table's rows (a
+// outside the project, its lineage, the project's own part, then its sql and its table's rows (a
 // test's failing rows); no hash, every table's lineage. its place in the
 // list comes into view, or on a phone the top of the page
 const go = () => {
@@ -204,8 +204,8 @@ const go = () => {
     h("p", {className: "chips"}, m.note), h("p", {className: "chips"},
     [m.file, m.by && `a file for each ${m.by}`, ...m.sources,
       ...m.env.map(k => "$" + k)].filter(Boolean).join(" · ")),
-    ext.head?.(m), dag([...up(m), m, ...down(m)].filter(x => x === m ||
-      !HIDE.test(x.id)), m)).childNodes)
+    dag([...up(m), m, ...down(m)].filter(x => x === m ||
+      !HIDE.test(x.id)), m), ext.head?.(m)).childNodes)
   head.querySelector(`[data-key="${CSS.escape(key)}"]`)?.scrollIntoView()
   const q = ext.tries?.(m)
   show(m, q?.[0])
