@@ -721,8 +721,9 @@ const steps = (ts, ref) => {
             .map((x, k) => (cs[k] ? words(...cs[k]) + ": " : "") + words(...x))
             .join(", ")
         })
-        return `a table written by hand, of ${hand.length} row${
-          hand.length > 1 ? "s" : ""}`
+        const n = hand.length
+        return `a${/^(8|1[18](\d{3})*$)/.test(n) ? "n" : ""} ${n}-row table ` +
+          "written by hand"
       }
       // a table after a comma: each of its rows with each row so far, or,
       // for an unnest, a row for each item of a list
