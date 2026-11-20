@@ -118,12 +118,22 @@ full rebuilds and ensure fresh data when needed. Each run also writes the
 dependency graph to `build/dag.mmd` as a [Mermaid](https://mermaid.js.org)
 flowchart.
 
+## Inspector
+
+`inspect.mk` is an optional second file. `make inspect` serves a page that
+lists every model and test, draws the dependency graph from the plan, and
+shows each model's SQL as steps in plain words. A click on a step or a clause
+runs the query up to that point in the browser, with
+[DuckDB-Wasm](https://github.com/duckdb/duckdb-wasm), against the tables as
+Make last built them. It builds nothing: a model without a table shows as not
+built. See [REFERENCE.md](REFERENCE.md#inspector).
+
 ## Development
 
 `./test.sh` runs the end-to-end tests in `test/` in parallel against real `make`
 and `duckdb` executables (set `MAKE` and `DUCKDB` to try others). They cover
-rebuilds, dependency resolution, errors, partitioned models, remote sources
-over HTTP and S3, a pipeline over millions of generated rows and a random
+rebuilds, dependency resolution, errors, partitioned models, the inspector's
+files, remote sources over HTTP and S3, a pipeline over millions of generated rows and a random
 300-model project checked against an independent model of its dependency
 graph. `./bench.sh [git ref ...]` times the working copy against earlier
 versions.

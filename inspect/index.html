@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Inspect</title>
+<link rel="icon" href="data:,">
+<style>
+/* the inspector: a list of models, a model's lineage and sql, and the rows
+   of the part of it last clicked */
+:root {
+  --bg: #000; --fg: #fff; --mute: #808080; --line: #262626;
+  --panel: #0d0d0d; --hi: #00a3a3; --err: #ff6b6b;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+}
+* {
+  box-sizing: border-box; scrollbar-width: thin;
+  scrollbar-color: #333 transparent;
+}
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #4d4d4d; }
+::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: none; }
+:focus-visible { outline: 1px solid var(--hi); outline-offset: -1px; }
+input:focus { outline: none; }
+[hidden] { display: none !important; }
+html { background: var(--bg); color: var(--fg); }
+body {
+  margin: 0; height: 100vh; display: grid;
+  grid: "nav main" 1fr / var(--nav, 260px) minmax(0, 1fr);
+  font: 14px/1.45 system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+a { color: inherit; text-underline-offset: .2em; }
+nav {
+  grid-area: nav; overflow: auto; padding: 16px;
+  border-right: 1px solid var(--line);
+}
+nav input {
+  width: 100%; padding: 6px 8px; margin-bottom: 12px; font: inherit;
+  background: var(--panel); color: inherit; border: 1px solid var(--line);
+}
+nav h2 {
+  margin: 16px 0 4px; font-size: 11px; font-weight: 500;
+  text-transform: uppercase; letter-spacing: .06em; color: var(--mute);
+}
+nav a {
+  display: flex; gap: 8px; justify-content: space-between;
+  padding: 1px 0; text-decoration: none; white-space: nowrap;
+}
+nav a span { overflow: hidden; text-overflow: ellipsis; color: var(--mute); }
+nav a.off, .dag a.off { color: var(--mute); }
+nav a:hover, nav a.on { color: var(--hi); }
+main {
+  grid-area: main; min-width: 0; display: grid;
+  grid: "head head" auto "sql out" 1fr / minmax(0, var(--split, 50%))
+    minmax(0, 1fr);
+  overflow: hidden; position: relative;
+}
+header {
+  grid-area: head; padding: 16px 20px; max-height: var(--head, 50vh);
+  overflow: auto;
+  border-bottom: 1px solid var(--line);
+}
+h1 { margin: 0 0 4px; font-size: 20px; font-weight: 500; }
+header p { margin: 4px 0; max-width: 80ch; }
+.chips { color: var(--mute); }
+pre {
+  margin: 0; font: 12.5px/1.5 var(--mono); white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+#sql { grid-area: sql; overflow: auto; padding: 16px 20px; }
+.plan {
+  margin: 0 0 20px; padding: 0 0 16px; list-style: none; max-width: 80ch;
+  border-bottom: 1px solid var(--line);
+}
+.plan li {
+  padding: 3px 8px; margin-bottom: 2px; cursor: pointer;
+  border-left: 2px solid var(--line);
+}
+.plan li:hover { border-color: var(--mute); }
+.plan li.on { border-color: var(--hi); background: var(--panel); }
+.plan ul { margin: 2px 0 0; padding-left: 1.2em; list-style: none; }
+.plan .name { color: #e6c07b; }
+#sql .plan .at { color: #98c379; overflow-wrap: anywhere; }
+.plan .fn, #sql span[title]:not([title=""]):not(.cl) {
+  text-decoration: underline dotted var(--mute); text-underline-offset: .25em;
+  cursor: help;
+}
+.plan ul li { border: 0; padding: 1px 0; margin: 0; }
+button {
+  font: 12px system-ui, sans-serif;
+  color: var(--mute); background: var(--bg); border: 1px solid var(--line);
+  padding: 3px 8px; cursor: pointer;
+}
+button:hover { color: var(--fg); }
+#sql .c { color: var(--mute); }
+#sql .s { color: #e6c07b; }
+#sql .n { color: #d19a66; }
+#sql .k { color: #c678dd; }
+#sql .cl {
+  color: #c678dd; cursor: pointer; text-decoration: underline dotted;
+  text-underline-offset: .25em;
+}
+#sql .cl:hover, #sql .cl.on { background: var(--hi); color: #000; }
+#sql a { color: #61afef; }
+#out {
+  grid-area: out; min-width: 0; display: flex; flex-direction: column;
+  position: relative;
+  border-left: 1px solid var(--line); overflow: hidden;
+}
+.drag {
+  position: absolute; left: -4px; top: 0; bottom: 0; width: 8px; z-index: 1;
+  cursor: col-resize; touch-action: none;
+}
+#drag-nav { left: 0; width: 5px; }
+#drag-head {
+  position: static; grid-area: head; align-self: end; width: auto;
+  height: 8px; margin-bottom: -4px; cursor: row-resize;
+}
+.drag:hover, .drag.on { background: var(--hi); opacity: .5; }
+#status { padding: 6px 12px; color: var(--mute); font-size: 12px; }
+#status.err {
+  color: var(--err); white-space: pre-wrap; font-family: var(--mono);
+}
+#rows { overflow: auto; flex: 1; }
+table {
+  border-collapse: collapse; min-width: 100%; font: 12px/1.4 var(--mono);
+}
+th, td {
+  padding: 3px 10px; border-bottom: 1px solid var(--line); text-align: left;
+  vertical-align: top; max-width: 40ch; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+td:hover { white-space: normal; overflow-wrap: anywhere; }
+th {
+  position: sticky; top: 0; background: var(--bg); font-weight: 500;
+}
+th small { display: block; color: var(--mute); font-weight: 400; }
+td.r { text-align: right; }
+/* lineage: a table's colour is its schema's; one not built is grey */
+.dag { position: relative; overflow-x: auto; margin-top: 12px; }
+.dag svg { display: block; }
+.dag path { fill: none; stroke: #3a3a3a; stroke-width: 1.2; }
+.dag:has(a:hover) path { opacity: .25; }
+.dag path.on { stroke: var(--hi); opacity: 1 !important; stroke-width: 2; }
+.dag a {
+  position: absolute; height: 20px; padding: 0 8px; font: 12px/20px
+  var(--mono); text-decoration: none; white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; background: var(--panel);
+  border: 1px solid var(--line); border-left: 3px solid var(--s, #808080);
+}
+.dag a:hover, .dag a.on { background: var(--s, #808080); color: #000; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.legend span {
+  padding-left: 6px; color: var(--mute); font: 12px var(--mono);
+  border-left: 3px solid var(--s, #808080);
+}
+body.all main { grid: "head" 1fr / minmax(0, 1fr); }
+body.all header { max-height: none; border: 0; }
+body.all #sql, body.all #out, body.all #drag-head { display: none; }
+td.null { color: var(--mute); }
+@media (max-width: 860px) {
+  body { height: auto; grid: "main" auto "nav" auto / 1fr; }
+  main { grid: "head" auto "sql" auto "out" 80vh / minmax(0, 1fr); }
+  #out { border-left: 0; border-top: 1px solid var(--line); }
+  .drag { display: none; }
+  header, #sql { padding: 16px; }
+}
+</style>
+<nav><input type="search" name="q" placeholder="Filter"
+  aria-label="Filter"></nav>
+<main>
+<header><h1>Loading DuckDB</h1></header>
+<div id="drag-nav" class="drag" aria-hidden="true"></div>
+<div id="drag-head" class="drag" aria-hidden="true"></div>
+<div id="sql"></div>
+<div id="out">
+<div id="drag-split" class="drag" aria-hidden="true"></div>
+<div id="status"></div>
+<div id="rows"></div>
+</div>
+</main>
+<script>
+// an error that nothing catches, such as a file that does not load, shows
+for (const t of ["error", "unhandledrejection"]) addEventListener(t, e =>
+  Object.assign(document.querySelector("#status"), {className: "err",
+    textContent: e.message ?? e.reason?.message ?? e.reason}))
+</script>
+<script type="module" src="inspect.js"></script>
