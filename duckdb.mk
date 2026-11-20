@@ -321,6 +321,11 @@ set variable files = (
   from glob(getvariable('globs'))
   where not starts_with(file, '$(INSPECT)/')
 );
+set variable parquet = list_filter(getvariable('files'), lambda f: f like '%.parquet');
+set variable kv = if(len(getvariable('parquet')) > 0,
+  'select file_name as f, decode(value) as s from parquet_kv_metadata(getvariable(''parquet'')) where decode(key) = ''sql''',
+  'select '''' as f, '''' as s limit 0');
+create table kv as from query(getvariable('kv'));
 copy (
   select
     '$(notdir $(CURDIR))' as title,
@@ -346,7 +351,8 @@ copy (
         "by": nullif(col, ''),
         reads: (select coalesce(list(distinct m.id order by m.id), []) from edge join item as m on m.target = dep where edge.target = n.target),
         sources: (select coalesce(list(distinct d order by d), []) from arc where t = n.target and d not in (select target from src) and not regexp_matches(d, '^$(BUILD)/.*[*?]')),
-        env: (select coalesce(list(distinct x order by x), []) from vol where vol.target = n.target and k = 'env')
+        env: (select coalesce(list(distinct x order by x), []) from vol where vol.target = n.target and k = 'env'),
+        stale: coalesce((select bool_or(s <> content) from kv where f glob n.out), false)
       } order by file)
       from item as n
     ) as nodes

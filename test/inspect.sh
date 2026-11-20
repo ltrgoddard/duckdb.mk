@@ -41,6 +41,8 @@ is "a hidden model's files are not linked" "$($MAKE -s DUCKDB="$DUCKDB" inspect 
   "[build/s/a.parquet, 'build/s/deep/Part/k=a/data.parquet', 'build/s/deep/Part/k=b/data.parquet']"
 $MAKE -s DUCKDB="$DUCKDB" inspect INSPECT_HIDE='^top$$'
 is "a link, not a copy" "$(find build/s/a.parquet -links 2 | wc -l | xargs)" 1
+is "a table from other sql is stale" "$(echo >> models/s/a.sql; $MAKE -s DUCKDB="$DUCKDB" inspect INSPECT_HIDE='^top$$'; \
+  node s.a stale) $(node s.part stale)" 'true false'
 is "what to hide" "$(j hide)" '^top$'
 rm -r build/s/deep
 t "a table that has gone is unlinked" "" -s inspect

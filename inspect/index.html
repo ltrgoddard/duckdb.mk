@@ -35,11 +35,19 @@ nav {
   grid-area: nav; overflow: auto; padding: 16px;
   font: 13px/1.6 var(--mono); border-right: 1px solid var(--line);
 }
-/* the filter's text, not its box, lines up with the list */
+/* the filter: a grey band the width of the list, its text in line with
+   the names */
 nav input {
-  width: calc(100% + 18px); padding: 6px 8px; margin: 0 -9px 12px;
-  font: inherit;
-  background: var(--panel); color: inherit; border: 1px solid var(--line);
+  display: block; width: calc(100% + 32px); margin: -16px -16px 12px;
+  padding: 10px 16px; font: inherit; color: inherit; border: 0;
+  border-radius: 0; background: #1a1a1a;
+}
+nav input::placeholder { color: var(--mute); }
+/* until duckdb and the tables are ready, a black page that says so */
+body.load > * { display: none; }
+body.load::after {
+  content: "Loading…"; position: fixed; inset: 0; display: grid;
+  place-items: center; color: var(--mute);
 }
 nav h2 {
   margin: 16px 0 4px; font-size: 11px; font-weight: 500;
@@ -136,6 +144,7 @@ button:hover { color: var(--fg); }
   display: flex; align-items: center; gap: 6px; min-height: 36px;
   padding: 4px 12px; color: var(--mute); font-size: 12px;
 }
+#status .csv { margin-left: auto; }
 #status.err {
   color: var(--err); white-space: pre-wrap; font-family: var(--mono);
 }
@@ -191,10 +200,11 @@ td.null { color: var(--mute); }
   nav input, nav h2 { grid-column: 1 / -1; }
 }
 </style>
+<body class="load">
 <nav><input type="search" name="q" placeholder="Filter"
   aria-label="Filter"></nav>
 <main>
-<header><h1>Loading DuckDB</h1></header>
+<header></header>
 <div id="drag-nav" class="drag" aria-hidden="true"></div>
 <div id="drag-head" class="drag" aria-hidden="true"></div>
 <div id="sql"><div class="view"><button data-v="">Steps</button><button
@@ -208,6 +218,7 @@ td.null { color: var(--mute); }
 <script>
 // an error that nothing catches, such as a file that does not load, shows
 for (const t of ["error", "unhandledrejection"]) addEventListener(t, e =>
+  document.body.classList.remove("load") ||
   Object.assign(document.querySelector("#status"), {className: "err",
     textContent: e.message ?? e.reason?.message ?? e.reason}))
 </script>
@@ -957,7 +968,17 @@ const grid = (st, out) => {
           e.target.textContent = "Counting"
           const [{n}] = await sql(`select count(*)::int n from ${sub(q)}`)
           k === runs && e.target.replaceWith(`of ${n.toLocaleString()}`)
-        }}, "Count")] : [])
+        }}, "Count")] : [], h("button", {className: "csv", title:
+          "Download every row as CSV", onclick: async () => {
+          // written in duckdb's files, then dropped, so that the next is new
+          await query(`copy ${sub(q)} to 'rows.csv'
+            (header, use_tmp_file false)`)
+          const b = await db.copyFileToBuffer("rows.csv")
+          await db.dropFile("rows.csv")
+          h("a", {download: (decodeURIComponent(location.hash.slice(1)) ||
+            "rows").replaceAll("/", "-") + ".csv",
+            href: URL.createObjectURL(new Blob([b]))}).click()
+        }}, "CSV"))
       const add = t => {
         const cols = t.schema.fields.map((_, j) => t.getChildAt(j))
         body.append(...Array.from({length: Math.min(t.numRows, N)}, (_, i) =>
@@ -1002,13 +1023,17 @@ const {nodes, files} = cfg, by = Object.fromEntries(nodes.map(m => [m.id, m]))
 
 // the files by the paths that the sql names, the variables that the
 // makefile sets and the macros, as in make, less the shell's dot
-// commands; each built model a view on its table
+// commands; each built model a view on its table, made when a model that
+// reads it is opened, since making it reads the table's file
 const lit = v => `'${String(v).replaceAll("'", "''")}'`
 const qn = s => `"${s.replaceAll('"', '""')}"`
 const glob = s => new RegExp("^" + s.replace(/[.+^$()|[\]\\{}]/g, "\\$&")
   .replace(/\*\*\/|\*|\?/g, m => ({"*": "[^/]*", "?": "[^/]"})[m] ?? "(.*/)?")
   + "$")
 await Promise.all(files.map(f => file(f, "files/" + f)))
+// geoparquet's geometry as its bytes: duckdb-wasm's spatial fails on some
+// files' metadata ("stoi: no conversion")
+await query("set enable_geoparquet_conversion = false")
 await query(`create macro getenv(k) as coalesce(map {'': ''${Object.entries(
   cfg.env).map(([k, v]) => `, ${lit(k)}: ${lit(v)}`).join("")}}[k], '')`)
 for (const m of nodes) {
@@ -1018,17 +1043,13 @@ for (const m of nodes) {
     t.replace(/^-- ?/gm, "").replace(/\s+/g, " ").trim())
   m.body = m.sql.slice(d.length), m.group = m.test ? "test" : s
   m.reads = new Set(m.reads.map(id => by[id]))
-  m.view = `${qn(s)}.${qn(t)}`
-  m.built = !m.test && files.some(f => glob(m.out).test(f)) && await query(
-    `create schema if not exists ${qn(s)};
-    create view ${m.view} as from ${lit(m.out)}`).then(() => true,
-    e => console.warn(m.id, e.message))
-  // stale: its table stores sql that is not the file's
-  const [k] = m.built ? await sql(`select decode(value) v from
-    parquet_kv_metadata(${lit(m.out)}) where decode(key) = 'sql'`)
-    .catch(() => []) : []
-  m.stale = k != null && k.v !== m.sql
+  m.view = `${qn(s)}.${qn(t)}`, m.schema = qn(s)
+  m.built = !m.test && files.some(f => glob(m.out).test(f))
 }
+const views = m => Promise.all([...up(m), m].filter(x => x.built).map(x =>
+  x.made ??= query(`create schema if not exists ${x.schema};
+    create view ${x.view} as from ${lit(x.out)}`)
+    .catch(e => console.warn(x.id, e.message))))
 for (const {file, sql: s} of cfg.macros)
   for (const q of statements(s.replace(/^\..*$/gm, "")))
     await query(q).catch(e => console.warn(file, e.message))
@@ -1080,7 +1101,7 @@ for (const m of nodes) m.attrs = {className: m.stale ? "old"
 const link = (id, a, q = a) => h("a", {href: "#" + encodeURIComponent(id),
   dataset: {id, q: q.toLowerCase()}, className: by[id]?.attrs.className ??
   ""}, a)
-nav.append(link("", "All tables"), ...groups.flatMap(g => [
+nav.append(link("", "Schema"), ...groups.flatMap(g => [
   h("h2", {}, label(g)), ...inG(g).map(m =>
     link(m.id, m.id.replace(/^.*[./]/, ""), `${label(g)} ${m.id}`))]))
 $("nav input").oninput = e => {
@@ -1192,7 +1213,7 @@ const show = m => {
 // reads, its lineage, then its sql and its table's rows (a test's failing
 // rows); no hash, the lineage of every table and test. its place in the
 // list comes into view, or on a phone the top of the page
-const go = () => {
+const go = async () => {
   const id = decodeURIComponent(location.hash.slice(1)), m = by[id]
   const on = nav.querySelector(`[data-id="${CSS.escape(id)}"]`)
   nav.querySelector(".on")?.classList.remove("on"), on?.classList.add("on")
@@ -1211,12 +1232,12 @@ const go = () => {
     ...m.env.map(k => h("span", {}, "$" + k))),
     dag([...up(m), m, ...down(m)].filter(x => x === m ||
       !HIDE.test(x.id)), m)).childNodes)
-  show(m)
+  show(m), await views(m)
   m.built ? run(`from ${m.view}`)
     : !m.test ? run.say(`Not built: make ${m.target}`)
     : [...m.reads].every(x => x.built) ? run(m.body)
     : run.say("Not run: a table that it reads is not built")
 }
 addEventListener("hashchange", go)
-go()
+go(), document.body.classList.remove("load")
 </script>
