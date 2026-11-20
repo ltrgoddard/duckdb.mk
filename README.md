@@ -92,7 +92,8 @@ want to build neat, reproducible data pipelines that run on a single machine.
 
 ## How to use it
 
-duckdb.mk is delivered as a single ~280-line file, which is mostly SQL.
+duckdb.mk is delivered as a single ~350-line file, which is mostly SQL; the
+inspector's page is seven more files that Make fetches when you first use it.
 The recommended way to deploy it is to `include` it in your project's existing
 Makefile, alongside variable definitions and additional targets for things
 DuckDB can't do (e.g. downloading and extracting complex source data). For
@@ -120,13 +121,12 @@ flowchart.
 
 ## Inspector
 
-`inspect.mk` is an optional second file. `make inspect` serves a page that
-lists every model and test, draws the dependency graph from the plan, and
-shows each model's SQL as steps in plain words. A click on a step or a clause
-runs the query up to that point in the browser, with
-[DuckDB-Wasm](https://github.com/duckdb/duckdb-wasm), against the tables as
-Make last built them. It builds nothing: a model without a table shows as not
-built. See [REFERENCE.md](REFERENCE.md#inspector).
+`make serve` opens a page that lists every model and test, draws the
+dependency graph from the plan, and shows each model's SQL as steps in plain
+words. A click on a step or a clause runs the query up to that point in the
+browser, with [DuckDB-Wasm](https://github.com/duckdb/duckdb-wasm), against
+the tables as Make last built them. It builds nothing: a model without a
+table shows as not built. See [REFERENCE.md](REFERENCE.md#inspector).
 
 ## Development
 

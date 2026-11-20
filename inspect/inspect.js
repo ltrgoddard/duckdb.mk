@@ -1,6 +1,6 @@
 // the inspector: a duckdb.mk project's models and tests, their lineage as
 // the plan has it, and each one's sql, run in the browser a clause at a
-// time over the tables as make last built them. inspect.json (inspect.mk)
+// time over the tables as make last built them. inspect.json (make inspect)
 // holds the nodes, the macros and the files; a file is at files/<its path>
 import {query, sql, file} from "./db.js"
 import {K, lex, pretty, part, statements, query as holds} from "./sql.js"
@@ -20,8 +20,8 @@ const run = grid($("#status"), out)
 const cfg = await (await fetch("inspect.json")).json()
 const {nodes, files} = cfg, by = Object.fromEntries(nodes.map(m => [m.id, m]))
 
-// the files by the paths that the sql names, the variables that make
-// passes (INSPECT_ENV) and the macros, as in make, less the shell's dot
+// the files by the paths that the sql names, the variables that the
+// makefile sets and the macros, as in make, less the shell's dot
 // commands; each built model a view on its table
 const lit = v => `'${String(v).replaceAll("'", "''")}'`
 const qn = s => `"${s.replaceAll('"', '""')}"`
@@ -73,7 +73,7 @@ const up = (m, s = new Set) =>
 const down = (m, s = new Set) => (nodes.forEach(x => x.reads.has(m) &&
   !s.has(x) && (s.add(x), down(x, s))), s)
 
-// a project's own module (INSPECT_JS), if it has one, may give: label(group),
+// a project's own module (its inspect.js), if it has one, may give: label(group),
 // first(group) to lead the list, badge(m) as [text, title], find(hash) for
 // a model's id, head(m) for more of its header, tries(m) for the queries to
 // show in place of its sql

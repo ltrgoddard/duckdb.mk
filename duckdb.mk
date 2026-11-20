@@ -1,5 +1,7 @@
 DUCKDB ?= duckdb
 BUILD  ?= build
+INSPECT ?= $(BUILD)/inspect
+DUCKDB_MK ?= main
 , := ,
 
 self   := $(lastword $(MAKEFILE_LIST))
@@ -13,11 +15,13 @@ by      = $($@.by)
 src     = $(if $(by),$(@:$(BUILD)/%=models/%@$(by).sql),$<)
 flags   = $(if $(findstring =,$(firstword $(MAKEFLAGS))),,$(firstword -$(MAKEFLAGS)))
 quiet   = $(findstring s,$(flags))
+page   := $(addprefix $(dir $(self))inspect/,index.html inspect.js db.js sql.js plan.js dag.js rows.js)
+passed  = $(foreach k,$(sort $(foreach m,$(models),$($m.env))),$(if $(findstring $(origin $k),file command line override),$k))
 recheck = $(if $(filter-out FORCE,$?)$(findstring B,$(flags)),,$(run) "$$FRESH" 2>/dev/null ||)
 
 all:
 clean: ; rm -rf $(BUILD)
-.PHONY: all test shell clean FORCE
+.PHONY: all test shell inspect serve clean FORCE
 .DELETE_ON_ERROR:
 
 ifneq ($(filter-out clean,$(or $(MAKECMDGOALS),all)),)
@@ -47,6 +51,20 @@ $(tests): test/%: tests/%.sql $(macros)
 shell: export VIEWS = $(views)
 shell: $(models)
 	@$(DUCKDB) $(macros:%=-cmd '.read %') -cmd "$$VIEWS"
+
+inspect: $(page) $(wildcard inspect.js)
+	@mkdir -p $(INSPECT) && cp $(page) $(INSPECT) && rm -f $(INSPECT)/project.js && \
+	  $(if $(wildcard inspect.js),cp inspect.js $(INSPECT)/project.js &&) \
+	  $(db) -cmd '.output /dev/null' -c "$$PLAN" -cmd '.output' -c "$$PAGE" > $(INSPECT)/.ls && \
+	  rm -rf $(INSPECT)/files && while IFS= read -r f; do t="$(INSPECT)/files/$$f" && \
+	  mkdir -p "$$(dirname "$$t")" && { ln -f "$$f" "$$t" 2>/dev/null || cp "$$f" "$$t"; }; \
+	  done < $(INSPECT)/.ls && rm $(INSPECT)/.ls
+
+serve: inspect
+	python3 -m http.server -d $(INSPECT) 8000
+
+$(page):
+	curl -sSfL --create-dirs -o $@ https://raw.githubusercontent.com/ltrgoddard/duckdb.mk/$(DUCKDB_MK)/inspect/$(@F)
 
 define PLAN
 create table src as
@@ -282,4 +300,57 @@ having count(*) > 0;
 $(if $(quiet),,select '$@: pass';)
 endef
 
-export PLAN FRESH MATERIALISE ASSERT
+define PAGE
+create table item as
+select *, if(kind = 'tests', target, if(schema = 'main', '', schema || '.') || name) as id
+from src
+join read_text(['models/**/*.sql', 'tests/**/*.sql']) on filename = file;
+set variable globs = (
+  select list(distinct p)
+  from (
+    select out from src where kind = 'models'
+    union all
+    select d from arc join item on target = t where '$(INSPECT_HIDE)' = '' or not regexp_matches(id, '$(INSPECT_HIDE)')
+  ) as t(p)
+  where not regexp_matches(p, '^[/~]|\.\./|://')
+);
+set variable files = (
+  select coalesce(list(distinct file order by file), [])
+  from glob(getvariable('globs'))
+  where not starts_with(file, '$(INSPECT)/')
+);
+copy (
+  select
+    '$(notdir $(CURDIR))' as title,
+    '$(INSPECT_HIDE)' as hide,
+    '$(wildcard inspect.js)' <> '' as ext,
+    getvariable('files') as files,
+    (
+      select map_from_entries(coalesce(list((k, getenv(k))), []))
+      from unnest(regexp_extract_all('$(passed)', '\S+')) as t(k)
+    ) as env,
+    (
+      select coalesce(list({file: filename, sql: content} order by filename), [])
+      from read_text(['macros/*.sql', 'models/**/*.sql'])
+      where filename like 'macros/%'
+    ) as macros,
+    (
+      select list({
+        id: id,
+        test: kind = 'tests',
+        file: file,
+        sql: content,
+        target: target,
+        out: out,
+        "by": nullif(col, ''),
+        reads: (select coalesce(list(distinct m.id order by m.id), []) from edge join item as m on m.target = dep where edge.target = n.target),
+        sources: (select coalesce(list(distinct d order by d), []) from arc where t = n.target and d not in (select target from src) and not regexp_matches(d, '^$(BUILD)/.*[*?]')),
+        env: (select coalesce(list(distinct x order by x), []) from vol where vol.target = n.target and k = 'env')
+      } order by file)
+      from item as n
+    ) as nodes
+) to '$(INSPECT)/inspect.json' (format json);
+select unnest(getvariable('files'));
+endef
+
+export PLAN FRESH MATERIALISE ASSERT PAGE

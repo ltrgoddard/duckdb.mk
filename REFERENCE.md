@@ -23,6 +23,8 @@ All directories are optional. Run `make` from the project root.
 | `DUCKDB` | `duckdb` | DuckDB executable           |
 | `BUILD`  | `build`  | Output directory            |
 | `PARQUET` | none    | Extra Parquet writer options, e.g. `compression zstd, row_group_size 10000` |
+| `INSPECT` | `$(BUILD)/inspect` | Directory of the inspector's page |
+| `INSPECT_HIDE` | none | Regular expression of the models and tests that the inspector leaves out |
 
 Set them before the `include` or on the command line. `PARQUET` can also be
 set for one model or a group of them with a target-specific variable:
@@ -39,6 +41,8 @@ rebuild a model: run `make -B` on the models it applies to.
 | `test`                   | Build the models that tests need, then run all tests |
 | `test/<path>`            | Run one test                                         |
 | `shell`                  | Build every model, then open DuckDB with macros and a view per model |
+| `inspect`                | Write the inspector's page to `$(INSPECT)`; build nothing |
+| `serve`                  | Write the page, then serve it on port 8000           |
 | `clean`                  | Remove `$(BUILD)`                                    |
 
 Standard Make flags apply: `-j` builds in parallel, `-s` hides row counts and
@@ -205,46 +209,37 @@ A local copy also works: `include duckdb.mk`.
 
 ## Inspector
 
-`inspect.mk` adds a page for reading a project: its models and tests, their
+`make serve` shows the project as a page: its models and tests, their
 dependencies as the plan has them, and each query as steps that run in the
-browser. It is in versions after v0.2.0. Include it after `duckdb.mk`; one
-rule fetches both files and the page's files in `inspect/`:
-
-```make
-DUCKDB_MK = main
-include $(addprefix .duckdb.mk/$(DUCKDB_MK)/,duckdb.mk inspect.mk)
-.duckdb.mk/%:
-	curl -sSfL --create-dirs -o $@ \
-	  https://raw.githubusercontent.com/ltrgoddard/duckdb.mk/$*
-```
-
-| Target                    | Action                                           |
-| ------------------------- | ------------------------------------------------ |
-| `inspect`                 | Write the page, then serve it on `PORT`          |
-| `$(INSPECT)/inspect.json` | Write the page only                              |
-
-| Variable       | Default            | Meaning                                |
-| -------------- | ------------------ | -------------------------------------- |
-| `INSPECT`      | `$(BUILD)/inspect` | Directory of the page, a static site   |
-| `INSPECT_ENV`  | none               | Variables whose values `getenv` returns in the page |
-| `INSPECT_HIDE` | none               | Regular expression of the models and tests to leave out |
-| `INSPECT_JS`   | none               | A module of the project's own for the page |
-| `PORT`         | `8000`             | Port that `make inspect` serves on     |
+browser. `make inspect` writes the page and does not serve it. Make fetches
+the page's seven files, at the version in `DUCKDB_MK`, the first time. With a
+local copy of `duckdb.mk`, put the repository's `inspect/` directory beside
+it.
 
 The page builds no model. Each run writes `inspect.json` from the plan and
 links into `$(INSPECT)/files` every built table and every local file that a
-model names, by hard link, or by copy on another filesystem. The files of a
-model that `INSPECT_HIDE` leaves out are not linked; its table is. A model without
-a table shows as not built, and its SQL and steps can still be read. To
-build first, add `$(INSPECT)/inspect.json: $(models)`. To publish the page,
-set `INSPECT` to a directory of a site, such as `site/inspect`.
+model names, by hard link, or by copy on another filesystem. A model without
+a table shows as not built, and its SQL and steps can still be read.
+`$(INSPECT)` is a static site. To publish it, set `INSPECT` to a directory of
+a site, such as `site/inspect`. To build before each write, and to write on
+each `make`:
+
+```make
+inspect: $(models)
+all: inspect
+```
 
 - A model's leading `--` comment is its description. A line that holds only
   `--` separates a note from it.
 - A test shows the rows that fail it.
-- `inspect.json` holds the values of the variables in `INSPECT_ENV` and no
-  others. Do not name a secret there. Other variables are empty strings in
-  the page. A target-specific value is not visible to the page.
+- `getenv` returns a variable's value in the page only if the Makefile or
+  the `make` command line sets it. A value from the shell's environment,
+  where secrets are, is never written to `inspect.json`, and is an empty
+  string in the page. So is a target-specific value.
+- `INSPECT_HIDE` leaves the matching models and tests out of the list and
+  the graph, and does not link the files that only they name. Their tables
+  are still linked, because the steps of other models read them: a hidden
+  table in a published page can be downloaded by its path.
 - Macros run in the browser in file order. A statement that fails there,
   such as a setting or an extension that DuckDB-Wasm lacks, is skipped with
   a warning in the console.
@@ -256,11 +251,12 @@ set `INSPECT` to a directory of a site, such as `site/inspect`.
   jsDelivr at fixed versions, so the first load needs a network connection.
   DuckDB-Wasm has about 4 GB of memory and one thread.
 
-`INSPECT_JS` names an ES module whose default export is a function. The page
-calls it once with `{cfg, by, sql, h}`: the contents of `inspect.json`, the
-nodes by id, a function that runs a query and returns its rows, and an
-element builder. It can import the page's modules, such as `./sql.js`. It
-returns an object with any of these functions:
+A project can add to the page with a file named `inspect.js` at its root: an
+ES module whose default export is a function. The page calls it once with
+`{cfg, by, sql, h}`: the contents of `inspect.json`, the nodes by id, a
+function that runs a query and returns its rows, and an element builder. It
+can import the page's modules, such as `./sql.js`. It returns an object with
+any of these functions:
 
 | Function        | Returns                                                |
 | --------------- | ------------------------------------------------------ |
