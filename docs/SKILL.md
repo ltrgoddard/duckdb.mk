@@ -70,7 +70,7 @@ Commit `Makefile`, `models/`, `tests/`, `macros/` and any query files. Put
 # variables that queries read with getenv() must be exported
 export RADIUS ?= 250
 
-DUCKDB_MK = v0.2.0
+DUCKDB_MK = v0.3.0
 include .duckdb.mk/$(DUCKDB_MK)/duckdb.mk
 .duckdb.mk/%/duckdb.mk:
 	curl -sSfL --create-dirs -o $@ \
@@ -82,8 +82,8 @@ data/plants.csv:
 ```
 
 Use the latest tag from the releases page unless the user names a version.
-The inspector, and the SQL and commit stored in each table, need a version
-later than v0.2.0; until a release includes them, use `main`.
+The inspector, and the SQL and commit stored in each table, need v0.3.0 or
+later.
 Define extra targets after the `include`, so that `all` stays the default.
 
 ## Write models
