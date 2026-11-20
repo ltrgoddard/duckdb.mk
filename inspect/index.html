@@ -85,10 +85,9 @@ pre {
 }
 #sql { grid-area: sql; overflow: auto; padding: 16px 20px; }
 /* steps or sql, as the viewer last chose; sql if a query has no steps */
-.view {
-  position: sticky; top: -16px; margin: -16px 0 8px; padding: 16px 0 4px;
-  background: var(--bg);
-}
+/* the list's first line: the schema's link, and the toggle at its right */
+.top { display: flex; justify-content: space-between; align-items: center; }
+.view { display: flex; }
 .view button + button { margin-left: -1px; }
 .view button[aria-pressed=true] {
   position: relative; color: var(--fg); border-color: var(--mute);
@@ -200,18 +199,18 @@ td.null { color: var(--mute); }
   /* the names in as many columns as fit, each schema's under its heading */
   nav { display: grid; column-gap: 16px; align-content: start;
     grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); }
-  nav input, nav h2 { grid-column: 1 / -1; }
+  nav input, nav h2, .top { grid-column: 1 / -1; }
 }
 </style>
 <body class="load">
 <nav><input type="search" name="q" placeholder="Filter"
-  aria-label="Filter"></nav>
+  aria-label="Filter"><div class="view"><button data-view="">Steps</button
+  ><button data-view="code">SQL</button></div></nav>
 <main>
 <header></header>
 <div id="drag-nav" class="drag" aria-hidden="true"></div>
 <div id="drag-head" class="drag" aria-hidden="true"></div>
-<div id="sql"><div class="view"><button data-view="">Steps</button><button
-  data-view="code">SQL</button></div><div id="code"></div></div>
+<div id="sql"><div id="code"></div></div>
 <div id="out">
 <div id="drag-split" class="drag" aria-hidden="true"></div>
 <div id="status"></div>
@@ -1701,7 +1700,8 @@ for (const node of nodes) node.attrs = {className: node.built || node.test
 const listLink = (id, text, match = text) => element("a",
   {href: "#" + encodeURIComponent(id), dataset: {id, match:
   match.toLowerCase()}, className: byId[id]?.attrs.className ?? ""}, text)
-nav.append(listLink("", "Schema"), ...groups.flatMap(group => [
+nav.append(element("div", {className: "top"}, listLink("", "Schema"),
+  find(".view")), ...groups.flatMap(group => [
   element("h2", {}, label(group)), ...inGroup(group).map(node => listLink(
     node.id, node.id.replace(/^.*[./]/, ""), `${label(group)} ${node.id}`))]))
 find("nav input").oninput = event => {
