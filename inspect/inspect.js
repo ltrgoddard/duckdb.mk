@@ -182,9 +182,10 @@ const show = (m, s) => {
 }
 
 // a node, by the hash: its description, its file and what it reads from
-// outside the project, its lineage, the project's own part, then its sql and its table's rows (a
-// test's failing rows); no hash, every table's lineage. its place in the
-// list comes into view, or on a phone the top of the page
+// outside the project, its lineage, the project's own part, then its sql
+// and its table's rows (a test's failing rows); no hash, the lineage of
+// every table and test. its place in the list comes into view, or on a
+// phone the top of the page
 const go = () => {
   const key = decodeURIComponent(location.hash.slice(1))
   const id = ext.find?.(key) ?? key, m = by[id]
@@ -195,9 +196,8 @@ const go = () => {
   document.title = [cfg.title, id].filter(Boolean).join(" / ")
   document.body.classList.toggle("all", !id)
   if (!id) return head.replaceChildren(h("h1", {}, cfg.title),
-    h("p", {className: "legend"}, groups.filter(g => g !== "test").map(g =>
-      h("span", {style: inG(g)[0].attrs.style}, label(g)))),
-    dag(shown.filter(m => !m.test)))
+    h("p", {className: "legend"}, groups.map(g =>
+      h("span", {style: inG(g)[0].attrs.style}, label(g)))), dag(shown))
   head.replaceChildren(h("h1", {}, id))
   if (!m) return $("#sql").replaceChildren(), run.say("Not in this project")
   head.append(...h("div", {}, m.desc && h("p", {}, m.desc), m.note &&
