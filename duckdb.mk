@@ -54,11 +54,12 @@ shell: $(models)
 	@$(DUCKDB) $(macros:%=-cmd '.read %') -cmd "$$VIEWS"
 
 inspect: $(page)
-	@mkdir -p $(INSPECT) && cp $(page) $(INSPECT) && \
+	@mkdir -p $(INSPECT) && cp $(page) $(INSPECT) && rm -f $(INSPECT)/inspect.json && \
 	  $(db) -cmd '.output /dev/null' -c "$$PLAN" -cmd '.output' -c "$$PAGE" > $(INSPECT)/.ls && \
-	  rm -rf $(INSPECT)/files && while IFS= read -r f; do t="$(INSPECT)/files/$$f" && \
-	  mkdir -p "$$(dirname "$$t")" && { ln -f "$$f" "$$t" 2>/dev/null || cp "$$f" "$$t"; }; \
-	  done < $(INSPECT)/.ls && rm $(INSPECT)/.ls
+	  { cat $(BUILD)/plan.mk && sed -n 's/^P //p' $(INSPECT)/.ls; } > $(INSPECT)/plan.mk && \
+	  rm -rf $(INSPECT)/files && sed -n 's/^F //p' $(INSPECT)/.ls | while IFS= read -r f; do \
+	  t="$(INSPECT)/files/$$f" && mkdir -p "$$(dirname "$$t")" && \
+	  { ln -f "$$f" "$$t" 2>/dev/null || cp "$$f" "$$t"; }; done && rm $(INSPECT)/.ls
 
 serve: inspect
 	@{ sleep 1 && python3 -m webbrowser http://localhost:8000/; } >/dev/null &
@@ -303,16 +304,12 @@ $(if $(quiet),,select '$@: pass';)
 endef
 
 define PAGE
-create table item as
-select *, if(kind = 'tests', target, if(schema = 'main', '', schema || '.') || name) as id
-from src
-join read_text(['models/**/*.sql', 'tests/**/*.sql']) on filename = file;
 set variable globs = (
   select list(distinct p)
   from (
     select out from src where kind = 'models'
     union all
-    select d from arc join item on target = t where '$(INSPECT_HIDE)' = '' or not regexp_matches(id, '$(INSPECT_HIDE)')
+    select d from arc join src on target = t where '$(INSPECT_HIDE)' = '' or not regexp_matches(if(kind = 'tests', target, if(schema = 'main', '', schema || '.') || name), '$(INSPECT_HIDE)')
   ) as t(p)
   where not regexp_matches(p, '^[/~]|\.\./|://')
 );
@@ -326,38 +323,31 @@ set variable kv = if(len(getvariable('parquet')) > 0,
   'select file_name as f, decode(value) as s from parquet_kv_metadata(getvariable(''parquet'')) where decode(key) = ''sql''',
   'select '''' as f, '''' as s limit 0');
 create table kv as from query(getvariable('kv'));
-copy (
-  select
-    '$(notdir $(CURDIR))' as title,
-    '$(INSPECT_HIDE)' as hide,
-    getvariable('files') as files,
-    (
-      select map_from_entries(coalesce(list((k, getenv(k))), []))
-      from unnest(regexp_extract_all('$(passed)', '\S+')) as t(k)
-    ) as env,
-    (
-      select coalesce(list({file: filename, sql: content} order by filename), [])
-      from read_text(['macros/*.sql', 'models/**/*.sql'])
-      where filename like 'macros/%'
-    ) as macros,
-    (
-      select list({
-        id: id,
-        test: kind = 'tests',
-        file: file,
-        sql: content,
-        target: target,
-        out: out,
-        "by": nullif(col, ''),
-        reads: (select coalesce(list(distinct m.id order by m.id), []) from edge join item as m on m.target = dep where edge.target = n.target),
-        sources: (select coalesce(list(distinct d order by d), []) from arc where t = n.target and d not in (select target from src) and not regexp_matches(d, '^$(BUILD)/.*[*?]')),
-        env: (select coalesce(list(distinct x order by x), []) from vol where vol.target = n.target and k = 'env'),
-        stale: coalesce((select bool_or(s <> content) from kv where f glob n.out), false)
-      } order by file)
-      from item as n
-    ) as nodes
-) to '$(INSPECT)/inspect.json' (format json);
-select unnest(getvariable('files'));
+create macro esc(x) as replace(replace(x, '$$', '$$$$'), '#', '\#');
+select line
+from (
+  select 'F ' || f from unnest(getvariable('files')) as t(f)
+  union all
+  select 'F ' || file from glob(['models/**/*.sql', 'tests/**/*.sql', 'macros/*.sql'])
+  union all
+  select 'P ' || unnest([
+    'inspect.title := ' || esc('$(notdir $(CURDIR))'),
+    'inspect.hide := ' || esc('$(INSPECT_HIDE)')
+  ])
+  union all
+  select 'P inspect.files += ' || esc(f) from unnest(getvariable('files')) as t(f)
+  union all
+  select 'P inspect.macros += ' || file from glob('macros/*.sql')
+  union all
+  select 'P ' || target || '.file := ' || file from src
+  union all
+  select 'P ' || target || '.stale := true'
+  from src join read_text(['models/**/*.sql', 'tests/**/*.sql']) as r on r.filename = src.file
+  where exists (from kv where f glob src.out and s <> r.content)
+  union all
+  select 'P ' || k || ' := ' || esc(getenv(k))
+  from unnest(regexp_extract_all('$(passed)', '\S+')) as t(k)
+) as t(line);
 endef
 
 export PLAN FRESH MATERIALISE ASSERT PAGE

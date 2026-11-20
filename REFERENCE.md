@@ -224,9 +224,13 @@ the page, one HTML file, at the version in `DUCKDB_MK`, the first time. With a
 local copy of `duckdb.mk`, put the repository's `inspect/` directory beside
 it.
 
-The page builds no model. Each run writes `inspect.json` from the plan and
-links into `$(INSPECT)/files` every built table and every local file that a
-model names, by hard link, or by copy on another filesystem. A model without
+The page builds no model. Each run writes `plan.mk` beside the page: the
+plan that make reads, and lines that the page needs as well, in the same
+form (the title, `INSPECT_HIDE`, the files linked, the macros, each node's
+file, the stale tables and the variables' values). It links into
+`$(INSPECT)/files` the SQL of the models, tests and macros, every built
+table and every local file that a model names, by hard link, or by copy on
+another filesystem. The page reads the SQL from these files. A model without
 a table shows as not built, and its SQL and steps can still be read.
 `$(INSPECT)` is a static site. To publish it, set `INSPECT` to a directory of
 a site, such as `site/inspect`. To build before each write, and to write on
@@ -246,7 +250,7 @@ all: inspect
   and its page says to rebuild it: its rows are from the earlier version.
 - `getenv` returns a variable's value in the page only if the Makefile or
   the `make` command line sets it. A value from the shell's environment,
-  where secrets are, is never written to `inspect.json`, and is an empty
+  where secrets are, is never written to `plan.mk`, and is an empty
   string in the page. So is a target-specific value.
 - `INSPECT_HIDE` leaves the matching models and tests out of the list and
   the graph, and does not link the files that only they name. Their tables

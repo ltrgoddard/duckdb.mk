@@ -225,7 +225,7 @@ for (const t of ["error", "unhandledrejection"]) addEventListener(t, e =>
 <script type="module">
 // the inspector: a duckdb.mk project's models and tests, their lineage as
 // the plan has it, and each one's sql, run in the browser a clause at a
-// time over the tables as make last built them. inspect.json (make inspect)
+// time over the tables as make last built them. plan.mk (make inspect)
 // holds the nodes, the macros and the files; a file is at files/<its path>
 import {formatDialect, duckdb as dialect} from
   "https://cdn.jsdelivr.net/npm/sql-formatter@15.9.0/+esm"
@@ -428,8 +428,10 @@ const PH = Object.entries({
   "the number of rows": "count()", "the number of {0}": "count",
   "the total of {0}": "sum", "the mean of {0}": "avg mean",
   "the median of {0}": "median", "the lowest {0}": "min",
-  "the highest {0}": "max", "any {0}": "any_value", "the first {0}": "first first_value",
-  "the last {0}": "last last_value",
+  "the highest {0}": "max", "any {0}": "any_value",
+  "the first {0}": "first", "the last {0}": "last",
+  "the first value of {0}": "first_value",
+  "the last value of {0}": "last_value",
   "the {0} with the highest {1}": "arg_max max_by",
   "the {0} with the lowest {1}": "arg_min min_by",
   "the list of {0}": "list array_agg", "{0} joined by {1}": "string_agg",
@@ -448,7 +450,8 @@ const PH = Object.entries({
   "every part of {0} that matches {1}": "regexp_extract_all",
   "the place of {1} in {0}": "strpos instr list_position list_indexof",
   "{0} read as a date in the form {1}": "strptime try_strptime",
-  "the file name in {0}": "parse_filename", "the type of {0}": "json_type typeof",
+  "the file name in {0}": "parse_filename",
+  "the type of {0}": "json_type typeof",
   "each item of {0}|each item of {1} in {0}": "json_each",
   "{0}|the {1} in {0}": "json_extract json_extract_string",
   "the length of {0}|the length of {1} in {0}": "json_array_length",
@@ -511,7 +514,7 @@ const steps = (ts, ref) => {
     }
   })
   const words = (a, b) => {
-    let o = "", btw
+    let o = "", btw, call = []
     // a "not" just before, taken back
     const neg = () => +(/\bnot\s*$/.test(o) && !!(o = o.replace(/\bnot\s*$/,
       " ")))
@@ -527,9 +530,22 @@ const steps = (ts, ref) => {
         if (ts[i + 1]?.t === "(") i = ts[i + 1].c
         while (ts[i + 1]?.t === "[" || ts[i + 1]?.t === "]") i++
       } else if (x.w === "over" && (p || ts[n]?.w in win)) {
-        const q = p || win[ts[n].w]
-        const w = words(q + 1, ts[q].c).replace(/^partition by\b/, "each")
-        o += w ? " over " + w : "", i = p ? ts[p].c : n
+        // within each partition; a total or a last value with an order and
+        // no frame of its own is of the rows so far
+        const q = p || win[ts[n].w], e = pv(ts, i), f = ts[pv(ts,
+          ts.findLastIndex(y => y.c === e))]?.w, all = AGG.test(f) ||
+          f === "last_value", fr = ts.some((y, k) => y.o === q &&
+          /^(rows|range|groups)$/.test(y.w))
+        const w = words(q + 1, ts[q].c).replace(/^partition by\b/,
+          "within each").replace(/\s*\bin order of\b/, m => all && !fr
+          ? ", so far in order of" : m)
+        o += w ? (w[0] === "," ? "" : " ") + w : all ? " across all the rows"
+          : ""
+        i = p ? ts[p].c : n
+        // in brackets if more follows, which would read as of its order
+        if (w && call[0] === e && nx(ts, i) < b && !/^[)\],]$/.test(ts[nx(ts,
+          i)].t))
+          o = o.slice(0, call[1]) + ` (${o.slice(call[1]).trim()}) `
       } else if (p && /^(try_)?cast$/.test(x.w)) {
         let j = p + 1
         while (j < ts[p].c && !(ts[j].o === p && ts[j].w === "as")) j++
@@ -544,7 +560,7 @@ const steps = (ts, ref) => {
           : x.w === "concat" ? as.join(" followed by ")
           : x.w === "greatest" || x.w === "least" ? `the ${x.w} of ${or(as,
             " and ")}` : fill(PH[as.length ? x.w : x.w + "()"] ?? PH[x.w], as)
-        o += wrap(t, i, c), i = c
+        call = [c, o.length], o += wrap(t, i, c), i = c
         const f = nx(ts, i)
         if (ts[f]?.w === "filter" && ts[nx(ts, f)]?.t === "(") {
           const g = nx(ts, f), w = ts[nx(ts, g)].w === "where" ? nx(ts, g) : g
@@ -562,9 +578,10 @@ const steps = (ts, ref) => {
         }
         const op = words(i + 1, at[0] ?? j), seg = k =>
           words(at[k] + 1, at[k + 1] ?? j)
-        o += wrap(at.flatMap((k, m) => ts[k].w === "when" ? [`${seg(m + 1)} if ${
-          op ? op + " is " : ""}${seg(m)}`] : ts[k].w === "else"
-          ? ["else " + seg(m)] : []).join(", "), i, j), i = j
+        o += wrap(at.flatMap((k, m) => ts[k].w === "when"
+          ? [`${seg(m + 1)} if ${op ? op + " is " : ""}${seg(m)}`]
+          : ts[k].w === "else" ? ["else " + seg(m)] : []).join(", "), i, j)
+        i = j
       } else if (x.w === "in" && p) {
         const v = !holds(ts, p) && split(ts, p + 1, ts[p].c, p)
           .map(u => words(...u)), no = neg()
@@ -579,7 +596,8 @@ const steps = (ts, ref) => {
       else if (x.w === "is") {
         let j = n, no = ts[j]?.w === "not"
         if (no) j = nx(ts, j)
-        if (ts[j]?.w === "null") o += no ? " has a value " : " has no value ", i = j
+        if (ts[j]?.w === "null")
+          o += no ? " has a value " : " has no value ", i = j
         else if (ts[j]?.w === "distinct" && ts[nx(ts, j)]?.w === "from")
           o += no ? " is " : " is not ", i = nx(ts, j)
         else o += x.t
@@ -798,7 +816,8 @@ const steps = (ts, ref) => {
       // between's); a row's place at most n is the first n rows
       const keep = (w, j) => {
         const [a, b] = body(j), t = words(a, b), m = t.match(new RegExp(
-          "^the row's place over (?:each (.+?) )?in order of (.+) (?:=|≤) " +
+          "^\\(?the row's place (?:within each (.+?) )?in order of (.+?)\\)? " +
+          "(?:=|≤) " +
           "\x05n(\\d+)\x04$")), cut = [a]
         for (let k = a, btw = 0; k < b; k++) if (ts[k].o === g)
           ts[k].w === "between" ? btw = 1 : ts[k].w === "and" && btw
@@ -807,7 +826,7 @@ const steps = (ts, ref) => {
           words(k ? u + 1 : u, cut[k + 1] ?? b))
         S(m ? `Keep the first ${m[3] > 1 ? LIT("n", m[3]) + " rows" : "row"}${
           m[1] ? " of each " + m[1] : ""}, in order of ${m[2]}`
-          : cols.length > 1 ? `Keep the ${w} where:` : `Keep the ${w} where ${t}`,
+          : `Keep the ${w} where${cols.length > 1 ? ":" : " " + t}`,
           j, !m && cols.length > 1 ? {cols} : {})
       }
       for (const j of at("where")) keep("rows", j)
@@ -852,7 +871,8 @@ const steps = (ts, ref) => {
           return 1
         }
         const agg = !at("group").length && ts.slice(a, b).some((x, i) =>
-          AGG.test(x.w) && ts[a + i + 1]?.t === "(" && top(a + i))
+          AGG.test(x.w) && ts[a + i + 1]?.t === "(" && top(a + i) &&
+          ts[nx(ts, ts[a + i + 1].c)]?.w !== "over")
         const cols = split(ts, a, b, g).map(([u, v]) => {
           const [e, al] = cut(ts, u, v), ex = words(u, e)
           return al && al !== ex ? `${al}: ${ex}` : star(u, v) ?? ex
@@ -1041,8 +1061,45 @@ const $ = q => document.querySelector(q)
 const narrow = matchMedia("(max-width: 860px)")
 const nav = $("nav"), head = $("header"), out = $("#rows")
 const run = grid($("#status"), out)
-const cfg = await (await fetch("inspect.json")).json()
-const {nodes, files} = cfg, by = Object.fromEntries(nodes.map(m => [m.id, m]))
+// the project, from plan.mk beside the page: make's plan, and what make
+// inspect adds to it (inspect.*, each node's file, a stale table, the
+// variables' values), read as make reads it; each node's sql and each
+// macro's from its file
+const P = {}, E = [], un = v => v.replaceAll("$$", "$").replaceAll("\\#", "#")
+for (const l of (await (await fetch("plan.mk")).text()).split("\n")) {
+  let m
+  if (m = l.match(/^(\S+) \+= (.*)$/)) (P[m[1]] ??= []).push(un(m[2]))
+  else if (m = l.match(/^(\S+) := (.*)$/)) P[m[1]] = un(m[2])
+  else if (m = l.match(/^(\S+): (.*)$/)) E.push(m.slice(1))
+}
+const text = async f => {
+  const r = await fetch("files/" + f)
+  return r.ok ? r.text() : ""
+}
+const of = {}, ls = k => (P[k] ?? []).map(v => v.replaceAll("''", "'"))
+for (const t of [...P.models ?? [], ...P.tests ?? []]) {
+  const v = P[t + ".view"]?.match(/view "([^"]*)"\."([^"]*)" as from '(.*)';$/)
+  of[t] = {id: v ? v[1] === "main" ? v[2] : `${v[1]}.${v[2]}` : t,
+    test: !v, target: t, file: P[t + ".file"], out: v?.[3] ?? t,
+    by: P[t + ".by"], env: ls(t + ".env"), stale: !!P[t + ".stale"],
+    reads: [], sources: ls(t + ".sources").filter(s => !/[*?]/.test(s) ||
+      !P.models?.some(m => s.startsWith(m.split("/")[0] + "/")))}
+}
+for (const [t, d] of E) {
+  const n = of[t], s = d.replace(/^\$\(wildcard (.*)\)$/, "$1")
+  if (n && !/^(FORCE|\$\(dirs\))$/.test(d) && s !== n.file)
+    of[s] ? n.reads.push(of[s].id) : n.sources.push(s)
+}
+const nodes = Object.values(of).sort((a, b) => a.file < b.file ? -1 : 1)
+await Promise.all(nodes.map(async n => (n.sql = await text(n.file),
+  n.reads = [...new Set(n.reads)].sort(),
+  n.sources = [...new Set(n.sources)].sort())))
+const cfg = {title: P["inspect.title"], hide: P["inspect.hide"], nodes,
+  files: P["inspect.files"] ?? [], env: Object.fromEntries(nodes.flatMap(n =>
+    n.env).filter(k => k in P).map(k => [k, P[k]])),
+  macros: await Promise.all((P["inspect.macros"] ?? []).map(async file =>
+    ({file, sql: await text(file)})))}
+const {files} = cfg, by = Object.fromEntries(nodes.map(m => [m.id, m]))
 
 // the files by the paths that the sql names, the variables that the
 // makefile sets and the macros, as in make, less the shell's dot
