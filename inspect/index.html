@@ -48,6 +48,7 @@ nav a {
   overflow: hidden; text-overflow: ellipsis;
 }
 nav a.off, .dag a.off { color: var(--mute); }
+nav a.old, .dag a.old { font-style: italic; }
 nav a:hover, nav a.on { color: var(--hi); }
 main {
   grid-area: main; min-width: 0; display: grid;
@@ -815,6 +816,11 @@ for (const m of nodes) {
     `create schema if not exists ${qn(s)};
     create view ${m.view} as from ${lit(m.out)}`).then(() => true,
     e => console.warn(m.id, e.message))
+  // stale: its table stores sql that is not the file's
+  const [k] = m.built ? await sql(`select decode(value) v from
+    parquet_kv_metadata(${lit(m.out)}) where decode(key) = 'sql'`)
+    .catch(() => []) : []
+  m.stale = k != null && k.v !== m.sql
 }
 for (const {file, sql: s} of cfg.macros)
   for (const q of statements(s.replace(/^\..*$/gm, "")))
@@ -858,7 +864,8 @@ const groups = [...new Set(shown.map(m => m.group))].sort((a, b) =>
   far(a) - far(b) || inG(b).length - inG(a).length)
 const HUES = ["#e6c07b", "#61afef", "#98c379", "#c678dd", "#56b6c2",
   "#d19a66", "#e06c75", "#abb2bf"]
-for (const m of nodes) m.attrs = {className: m.built || m.test ? "" : "off",
+for (const m of nodes) m.attrs = {className: m.stale ? "old"
+  : m.built || m.test ? "" : "off",
   style: `--s:${m.test ? "#808080"
     : HUES[groups.indexOf(m.group) % HUES.length]}`}
 const link = (id, a) => h("a", {href: "#" + encodeURIComponent(id),
@@ -967,7 +974,8 @@ const go = () => {
   head.replaceChildren(h("h1", {}, id))
   if (!m) return $("#sql").replaceChildren(), run.say("Not in this project")
   head.append(...h("div", {}, m.desc && h("p", {}, m.desc), m.note &&
-    h("p", {className: "note"}, m.note), h("p", {className: "file"}, m.file,
+    h("p", {className: "note"}, m.note), m.stale && h("p", {className:
+    "note"}, `Its table is from an earlier version: make ${m.target}`), h("p", {className: "file"}, m.file,
     ...m.env.map(k => h("span", {}, "$" + k))),
     dag([...up(m), m, ...down(m)].filter(x => x === m ||
       !HIDE.test(x.id)), m)).childNodes)

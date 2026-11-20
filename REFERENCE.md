@@ -240,6 +240,8 @@ all: inspect
 - A model's leading `--` comment is its description. A line that holds only
   `--` separates a note from it.
 - A test shows the rows that fail it.
+- A model whose table stores SQL that differs from its file is in italics,
+  and its page says to rebuild it: its rows are from the earlier version.
 - `getenv` returns a variable's value in the page only if the Makefile or
   the `make` command line sets it. A value from the shell's environment,
   where secrets are, is never written to `inspect.json`, and is an empty
