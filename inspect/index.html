@@ -1542,8 +1542,11 @@ const readPlan = text => {
   }
   return {variables, rules}
 }
+// make rewrites these files in place: ask the server each time, so a cached
+// plan.mk from an earlier version cannot meet a newer page
+const get = (path, options) => fetch(path, {cache: "no-cache", ...options})
 const fileText = async path => {
-  const response = await fetch("files/" + path)
+  const response = await get("files/" + path)
   return response.ok ? response.text() : ""
 }
 // the nodes, by target: a model (its view names it) or a test, each with
@@ -1576,7 +1579,7 @@ const readNodes = ({variables, rules}) => {
   }
   return Object.values(byTarget).sort((a, b) => a.file < b.file ? -1 : 1)
 }
-const planFile = readPlan(await (await fetch("plan.mk")).text())
+const planFile = readPlan(await (await get("plan.mk")).text())
 const nodes = readNodes(planFile)
 await Promise.all(nodes.map(async node => {
   node.sql = await fileText(node.file)
@@ -1593,7 +1596,7 @@ const project = {title: decodeURIComponent(directories.at(-1) ?? "Inspect"),
 const byId = Object.fromEntries(nodes.map(node => [node.id, node]))
 // whether a file is there, without reading it
 const exists = async path =>
-  (await fetch("files/" + path, {method: "HEAD"}).catch(() => ({}))).ok
+  (await get("files/" + path, {method: "HEAD"}).catch(() => ({}))).ok
 
 // the files by the paths that the sql names (a table's, and each local
 // source's) and the macros, as in make, less the shell's dot commands; each
