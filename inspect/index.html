@@ -1425,6 +1425,9 @@ const rowsView = (status, out) => {
     const runNumber = ++runs, started = performance.now()
     const current = () => runNumber === runs
     tries = [tries].flat(), loadMore = null, say("Running")
+    // duckdb-wasm runs one query at a time, and cannot stop one
+    setTimeout(() => current() && status.textContent === "Running" &&
+      say("Running. To stop it, reload the page"), 10000)
     try {
       const {sql, table} = await firstThatRuns(tries)
       const types = await rowsOf(`describe select * from ${inBrackets(sql)}`)
