@@ -872,7 +872,7 @@ const down = (m, s = new Set) => (nodes.forEach(x => x.reads.has(m) &&
 // tables before theirs, the schema with more tables first when that is the
 // same, and the tests last. a schema's colour is its place in that order
 const HIDE = new RegExp(cfg.hide || "^$")
-const label = g => g === "test" ? "Tests" : g
+const label = g => g === "test" ? "tests" : g
 const shown = nodes.filter(m => !HIDE.test(m.id))
 const inG = g => shown.filter(m => m.group === g), far = g => g === "test"
   ? Infinity : inG(g).reduce((a, m) => a + up(m).size, 0) / inG(g).length
