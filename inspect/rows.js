@@ -15,9 +15,11 @@ const N = 200, WHY = [[/Referenced (table|column)/, "This part cannot run " +
   "more memory than the browser gives DuckDB. Reload the page."]]
 const NUM = /^(U?(TINY|SMALL|BIG|HUGE)?INT|INTEGER|FLOAT|DOUBLE|DECIMAL)/
 const FLT = /^(FLOAT|DOUBLE|DECIMAL)/
-const h = (tag, a, ...k) => {
+// an element: its properties, its dataset, and its children, less the empty
+export const h = (tag, {dataset, ...a} = {}, ...k) => {
   const e = Object.assign(document.createElement(tag), a)
-  return e.append(...k), e
+  Object.assign(e.dataset, dataset)
+  return e.append(...k.flat().filter(x => x != null && x !== false)), e
 }
 const cell = v => v == null || typeof v !== "object" ? v
   : v.byteLength != null ? `${v.byteLength} bytes`

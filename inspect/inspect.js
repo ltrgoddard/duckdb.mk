@@ -6,14 +6,9 @@ import {query, sql, file} from "./db.js"
 import {K, lex, pretty, part, statements, query as holds} from "./sql.js"
 import {steps, MARK} from "./plan.js"
 import {dag} from "./dag.js"
-import {grid} from "./rows.js"
+import {grid, h} from "./rows.js"
 
 const $ = q => document.querySelector(q)
-const h = (tag, {dataset, ...a} = {}, ...k) => {
-  const e = Object.assign(document.createElement(tag), a)
-  Object.assign(e.dataset, dataset)
-  return e.append(...k.flat().filter(x => x != null && x !== false)), e
-}
 const narrow = matchMedia("(max-width: 860px)")
 const nav = $("nav"), head = $("header"), out = $("#rows")
 const run = grid($("#status"), out)
@@ -73,10 +68,10 @@ const up = (m, s = new Set) =>
 const down = (m, s = new Set) => (nodes.forEach(x => x.reads.has(m) &&
   !s.has(x) && (s.add(x), down(x, s))), s)
 
-// a project's own module (its inspect.js), if it has one, may give: label(group),
-// first(group) to lead the list, badge(m) as [text, title], find(hash) for
-// a model's id, head(m) for more of its header, tries(m) for the queries to
-// show in place of its sql
+// a project's own module (its inspect.js), if it has one, may give:
+// label(group), first(group) to lead the list, badge(m) as [text, title],
+// find(hash) for a model's id, head(m) for more of its header, and
+// tries(m) for the queries to show in place of its sql
 const ext = cfg.ext ? await (await import("./project.js"))
   .default({cfg, by, sql, h}) : {}
 // the list: the nodes that INSPECT_HIDE does not name, by schema. the

@@ -266,8 +266,7 @@ export const steps = (ts, ref) => {
     sub = was
     return out
   }
-  const out = plan(-1, 0, [])
+  const out = plan(-1, 0, []), l = level(ts, -1)
   return cx.pre.length ? [...cx.pre, {d: 0, t: "Then:",
-    i: level(ts, -1).cl.find(j => j >= level(ts, -1).m)},
-    ...out.map(x => ({...x, d: x.d + 1}))] : out
+    i: l.cl.find(j => j >= l.m)}, ...out.map(x => ({...x, d: x.d + 1}))] : out
 }
