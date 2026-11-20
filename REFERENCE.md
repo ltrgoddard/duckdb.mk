@@ -239,6 +239,8 @@ all: inspect
 
 - A model's leading `--` comment is its description. A line that holds only
   `--` separates a note from it.
+- A query shows as steps in words or as its SQL, as last chosen. A click on
+  a step or a clause runs the query to it and marks it in both.
 - A test shows the rows that fail it.
 - A model whose table stores SQL that differs from its file is in italics,
   and its page says to rebuild it: its rows are from the earlier version.

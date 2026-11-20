@@ -71,10 +71,15 @@ pre {
   overflow-wrap: anywhere;
 }
 #sql { grid-area: sql; overflow: auto; padding: 16px 20px; }
-.plan {
-  margin: 0 0 20px; padding: 0 0 16px; list-style: none; max-width: 80ch;
-  border-bottom: 1px solid var(--line);
+/* steps or sql, as the viewer last chose; sql if a query has no steps */
+.view {
+  position: sticky; top: -16px; margin: -16px 0 8px; padding: 16px 0 4px;
+  background: var(--bg);
 }
+.view button + button { margin-left: -1px; }
+.view button[aria-pressed=true] { color: var(--fg); border-color: var(--mute); }
+body.code .plan, body:not(.code) .plan:not(:empty) + pre { display: none; }
+.plan { margin: 0; padding: 0; list-style: none; max-width: 80ch; }
 .plan li {
   padding: 3px 8px; margin-bottom: 2px; cursor: pointer;
   border-left: 2px solid var(--line);
@@ -178,7 +183,8 @@ td.null { color: var(--mute); }
 <header><h1>Loading DuckDB</h1></header>
 <div id="drag-nav" class="drag" aria-hidden="true"></div>
 <div id="drag-head" class="drag" aria-hidden="true"></div>
-<div id="sql"></div>
+<div id="sql"><div class="view"><button data-v="">Steps</button><button
+  data-v="code">SQL</button></div><div id="code"></div></div>
 <div id="out">
 <div id="drag-split" class="drag" aria-hidden="true"></div>
 <div id="status"></div>
@@ -917,13 +923,24 @@ for (const [id, el, y, lo, hi, u] of [["nav", document.body, 0, 8, 50, "vw"],
   drag.onpointerup = drag.onpointercancel = drag.onlostpointercapture = stop
 }
 
-// a model's plan and sql (or s in its place): a step or a clause runs the
-// query to it, a table's name opens it
-const mark = (e, q) => {
-  $("#sql .on")?.classList.remove("on"), e.classList.add("on")
+// a model's plan and sql: a step or a clause runs the query to it, and is
+// marked in both, by the token (i) that starts it; a table's name opens it
+const on = () => [...document.querySelectorAll("#sql .on")]
+const mark = (i, q) => {
+  on().forEach(e => e.classList.remove("on"))
+  document.querySelectorAll(`#sql [data-i="${i}"]`).forEach(e =>
+    e.classList.add("on"))
   narrow.matches && out.scrollIntoView()
   run(q)
 }
+const view = (v = "") => {
+  document.body.classList.toggle("code", !!v)
+  for (const b of $(".view").children) b.ariaPressed = b.dataset.v === v
+  on().find(e => e.offsetParent)?.scrollIntoView({block: "nearest"})
+  try { localStorage["inspect.view"] = v } catch {}
+}
+for (const b of $(".view").children) b.onclick = () => view(b.dataset.v)
+try { view(localStorage["inspect.view"]) } catch { view() }
 const show = m => {
   const ts = m.fmt ??= pretty(m.body), pre = h("pre")
   const r = ref(m), to = n => h("a", {href: "#" + n.id, title: n.desc})
@@ -933,8 +950,8 @@ const show = m => {
     if (f) i += f.len - 1
     pre.append(f?.n.length === 1 ? Object.assign(to(f.n[0]), {textContent: t})
       : f || x.cl && holds(ts, x.o) ? h("span", {className: "cl", tabIndex: 0,
-        title: "Run the query to here", onclick: e => mark(e.target,
-          f ? `from ${t}` : part(ts, i))}, t)
+        dataset: {i}, title: "Run the query to here", onclick: () =>
+          mark(i, f ? `from ${t}` : part(ts, i))}, t)
       : x.k === "_" || x.k === "p" ? t
       : h("span", {className: x.k === "w" && K.has(x.w) ? "k" : x.k,
         title: ts[i + 1]?.t === "(" && FN[x.w] || ""}, t))
@@ -950,11 +967,11 @@ const show = m => {
       : t[0] === "\x02" ? h("span", {className: "name"}, s)
       : h(/^https?:/.test(s) ? "a" : "span", {className: "at", href: s}, s)
   })
-  $("#sql").replaceChildren(h("ol", {className: "plan"}, plan.map(x =>
-    h("li", {style: `margin-left:${x.d * 1.5}em`, tabIndex: 0, onclick: e =>
-      x.i != null && e.target.tagName !== "A" && mark(e.currentTarget,
-        part(ts, x.i))}, txt(x.t), x.cols && h("ul", {},
-        x.cols.map(c => h("li", {}, txt(c))))))), pre)
+  $("#code").replaceChildren(h("ol", {className: "plan"}, plan.map(x =>
+    h("li", {style: `margin-left:${x.d * 1.5}em`, tabIndex: 0,
+      dataset: x.i != null && {i: x.i}, onclick: e => x.i != null &&
+      e.target.tagName !== "A" && mark(x.i, part(ts, x.i))}, txt(x.t),
+      x.cols && h("ul", {}, x.cols.map(c => h("li", {}, txt(c))))))), pre)
 }
 
 // a node, by the hash: its description, its file and the variables it
@@ -972,10 +989,11 @@ const go = () => {
     h("p", {className: "legend"}, groups.map(g =>
       h("span", {style: inG(g)[0].attrs.style}, label(g)))), dag(shown))
   head.replaceChildren(h("h1", {}, id))
-  if (!m) return $("#sql").replaceChildren(), run.say("Not in this project")
+  if (!m) return $("#code").replaceChildren(), run.say("Not in this project")
   head.append(...h("div", {}, m.desc && h("p", {}, m.desc), m.note &&
     h("p", {className: "note"}, m.note), m.stale && h("p", {className:
-    "note"}, `Its table is from an earlier version: make ${m.target}`), h("p", {className: "file"}, m.file,
+    "note"}, `Its table is from an earlier version: make ${m.target}`),
+    h("p", {className: "file"}, m.file,
     ...m.env.map(k => h("span", {}, "$" + k))),
     dag([...up(m), m, ...down(m)].filter(x => x === m ||
       !HIDE.test(x.id)), m)).childNodes)
