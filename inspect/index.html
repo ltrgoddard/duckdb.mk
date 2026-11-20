@@ -620,9 +620,9 @@ const steps = (ts, ref) => {
         return t
       }
       for (const j of at("select")) {
-        let [a, b] = body(j), t = "Give"
+        let [a, b] = body(j), t = "Return"
         if (ts[a].w === "distinct")
-          a = nx(ts, a), t = "Without duplicates, give"
+          a = nx(ts, a), t = "Without duplicates, return"
         const top = i => {
           for (let o = ts[i].o; o !== g; o = ts[o].o) if (holds(ts, o)) return
           return 1
@@ -633,7 +633,7 @@ const steps = (ts, ref) => {
           const [e, al] = cut(ts, u, v), ex = words(u, e)
           return al && al !== ex ? `${al}: ${ex}` : star(u, v) ?? ex
         })
-        S(`${at("from").length ? agg ? "Over all the rows, give"
+        S(`${at("from").length ? agg ? "Over all the rows, return"
           : t : "Make one row of"}:`, j, {cols})
       }
       for (const j of at("qualify"))
