@@ -185,6 +185,10 @@ td.null { color: var(--mute); }
   #out { border-left: 0; border-top: 1px solid var(--line); }
   .drag { display: none; }
   header, #sql { padding: 16px; }
+  /* the names in as many columns as fit, each schema's under its heading */
+  nav { display: grid; column-gap: 16px; align-content: start;
+    grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); }
+  nav input, nav h2 { grid-column: 1 / -1; }
 }
 </style>
 <nav><input type="search" name="q" placeholder="Filter"
@@ -622,7 +626,10 @@ const steps = (ts, ref) => {
   const cx = {pre: [], n: 0, names: new Set}
   const plan = (g, d, out) => {
     const l = level(ts, g), was = sub
-    const S = (t, i, x = {}) => out.push({d, t, i, ...x})
+    // a step, with the rows of a table written by hand that it reads
+    let hand
+    const S = (t, i, x = {}) => (out.push({d, t, i, ...hand && {cols: hand},
+      ...x}), hand = null)
     sub = (j, name) => {
       const f = nx(ts, j), t = nx(ts, f)
       if (ts[f].w === "from" && ts[t].k === "w" && nx(ts, t) === ts[j].c)
@@ -684,8 +691,6 @@ const steps = (ts, ref) => {
         return at.every(Boolean) && `the ${m ? FILE[m[1]] : "file"}${
           at.length > 1 ? "s" : ""} at ${at.map(AT).join(", ")}`
       }
-      // a table written by hand is its number of rows and its columns: the
-      // rows are in the result
       // a table's alias, as in "from t as a" or "from f(x) a(y)": where
       // it starts
       const alias = (j, b) => {
@@ -706,11 +711,18 @@ const steps = (ts, ref) => {
             ? NAME(m) : m)) + (al == null ? ""
             : " as " + words(al, b).replace(/^as /i, ""))
         }
-        const n = split(ts, v + 1, ts[j].c, j).length
+        // a table written by hand: its rows, each by its columns' names
         let e = nx(ts, ts[j].c)
         e = nx(ts, ts[e]?.w === "as" ? nx(ts, e) : e)
-        return `a table written by hand, of ${n} row${n > 1 ? "s" : ""}` +
-          (ts[e]?.t === "(" ? ": " + words(e + 1, ts[e].c) : "")
+        const cs = ts[e]?.t === "(" ? split(ts, e + 1, ts[e].c, e) : []
+        hand = split(ts, v + 1, ts[j].c, j).map(([u, w]) => {
+          const p = nx(ts, u - 1)
+          return (ts[p].t === "(" ? split(ts, p + 1, ts[p].c, p) : [[u, w]])
+            .map((x, k) => (cs[k] ? words(...cs[k]) + ": " : "") + words(...x))
+            .join(", ")
+        })
+        return `a table written by hand, of ${hand.length} row${
+          hand.length > 1 ? "s" : ""}`
       }
       // a table after a comma: each of its rows with each row so far, or,
       // for an unnest, a row for each item of a list
@@ -747,13 +759,21 @@ const steps = (ts, ref) => {
           .replace(/, where $/, ""), j)
         for (const u of rest) S(pair(u), j)
       }
-      // a filter; a row's place at most n is the first n rows
+      // a filter, a line for each part between its ands and ors (not a
+      // between's); a row's place at most n is the first n rows
       const keep = (w, j) => {
-        const t = words(...body(j)), m = t.match(new RegExp("^the row's place " +
-          "over (?:each (.+?) )?in order of (.+) (?:=|≤) \x05n(\\d+)\x04$"))
+        const [a, b] = body(j), t = words(a, b), m = t.match(new RegExp(
+          "^the row's place over (?:each (.+?) )?in order of (.+) (?:=|≤) " +
+          "\x05n(\\d+)\x04$")), cut = [a]
+        for (let k = a, btw = 0; k < b; k++) if (ts[k].o === g)
+          ts[k].w === "between" ? btw = 1 : ts[k].w === "and" && btw
+            ? btw = 0 : /^(and|or)$/.test(ts[k].w) && cut.push(k)
+        const cols = cut.map((u, k) => (k ? ts[u].w + " " : "") +
+          words(k ? u + 1 : u, cut[k + 1] ?? b))
         S(m ? `Keep the first ${m[3] > 1 ? LIT("n", m[3]) + " rows" : "row"}${
           m[1] ? " of each " + m[1] : ""}, in order of ${m[2]}`
-          : `Keep the ${w} where ${t}`, j)
+          : cols.length > 1 ? `Keep the ${w} where:` : `Keep the ${w} where ${t}`,
+          j, !m && cols.length > 1 ? {cols} : {})
       }
       for (const j of at("where")) keep("rows", j)
       for (const j of at("group")) {
