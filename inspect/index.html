@@ -137,7 +137,7 @@ th {
   position: sticky; top: 0; background: var(--bg); font-weight: 500;
 }
 th small { display: block; color: var(--mute); font-weight: 400; }
-td.r { text-align: right; }
+.r { text-align: right; }
 /* lineage: a table's colour is its schema's; one not built is grey */
 .dag { position: relative; overflow-x: auto; margin-top: 12px; }
 .dag svg { display: block; }
@@ -765,8 +765,8 @@ const grid = (st, out) => {
       }
       add(t)
       out.replaceChildren(h("table", {}, h("thead", {}, h("tr", {},
-        ...ty.map(r => h("th", {}, r.column_name,
-          h("small", {}, r.column_type))))), body))
+        ...ty.map(r => h("th", {className: NUM.test(r.column_type) ? "r" : ""},
+          r.column_name, h("small", {}, r.column_type))))), body))
       out.scrollTop = 0, tell()
     } catch (e) {
       if (k === runs) out.replaceChildren(), say([WHY.find(([r]) =>
