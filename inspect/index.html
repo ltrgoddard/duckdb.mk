@@ -35,8 +35,10 @@ nav {
   grid-area: nav; overflow: auto; padding: 16px;
   font: 13px/1.6 var(--mono); border-right: 1px solid var(--line);
 }
+/* the filter's text, not its box, lines up with the list */
 nav input {
-  width: 100%; padding: 6px 8px; margin-bottom: 12px; font: inherit;
+  width: calc(100% + 18px); padding: 6px 8px; margin: 0 -9px 12px;
+  font: inherit;
   background: var(--panel); color: inherit; border: 1px solid var(--line);
 }
 nav h2 {
