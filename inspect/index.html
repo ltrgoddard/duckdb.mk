@@ -74,7 +74,8 @@ h1 { margin: 0 0 4px; font: 500 18px var(--mono); }
 header p { margin: 4px 0; max-width: 80ch; }
 .note, .file { color: var(--mute); }
 .file { font: 12.5px var(--mono); }
-/* a variable that the query reads: its value, for the viewer to give */
+/* a variable that the query reads: its value, for the viewer to give; a
+   change runs the step in view again, or the whole query if none is */
 .file input {
   margin-left: 2ch; padding: 0 4px; width: 18ch; font: inherit; color: var(--fg);
   border: 0; background: #1a1a1a;
@@ -163,7 +164,10 @@ td:hover { white-space: normal; overflow-wrap: anywhere; }
 th {
   position: sticky; top: 0; background: var(--bg); font-weight: 500;
 }
-th small { display: block; color: var(--mute); font-weight: 400; }
+th small {
+  display: block; color: var(--mute); font-weight: 400;
+  text-transform: lowercase;
+}
 .numeric { text-align: right; }
 /* lineage: a table's colour is its schema's; one not built is grey */
 /* the graph takes the header's height left over, so that its scroll bar is
@@ -1636,9 +1640,18 @@ const makeView = async node => {
 const makeViews = node => Promise.all([...upstream(node), node]
   .filter(other => other.built).map(other => other.made ??= makeView(other)
     .catch(error => console.warn(other.id, error.message))))
-for (const {file, sql} of project.macros)
-  for (const statement of statements(sql.replace(/^\..*$/gm, "")))
-    await query(statement).catch(error => console.warn(file, error.message))
+// a statement that fails is tried again after the others, since the shell's
+// .read lets one file's macro use a later file's
+let waiting = project.macros.flatMap(({file, sql}) =>
+  statements(sql.replace(/^\..*$/gm, "")).map(statement => ({file, statement})))
+for (let count; waiting.length && waiting.length !== count;) {
+  const failed = []
+  count = waiting.length
+  for (const {file, statement} of waiting) await query(statement)
+    .catch(error => failed.push({file, statement, error}))
+  waiting = failed
+}
+for (const {file, error} of waiting) console.warn(file, error.message)
 // what duckdb says of each function, and a macro's definition, for hover
 const FUNCTIONS = Object.fromEntries((await rowsOf(`select function_name f,
   coalesce(any_value(description), any_value(macro_definition)) d
@@ -1876,7 +1889,8 @@ const openNode = async () => {
         ariaLabel: name, value: env[name] ?? "", onchange: async event => {
           await query(`set variable ${quoted(name)} =
             ${literal(env[name] = event.target.value)}`)
-          openNode()
+          const step = marked()[0]
+          step ? step.click() : runTo(-1, queryAt(node.tokens, -1))
         }}))),
     lineage([...upstream(node), node, ...downstream(node)], node)]
     .filter(Boolean))
