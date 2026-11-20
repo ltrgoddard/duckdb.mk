@@ -212,7 +212,7 @@ A local copy also works: `include duckdb.mk`.
 `make serve` shows the project as a page: its models and tests, their
 dependencies as the plan has them, and each query as steps that run in the
 browser. `make inspect` writes the page and does not serve it. Make fetches
-the page's two files, at the version in `DUCKDB_MK`, the first time. With a
+the page, one HTML file, at the version in `DUCKDB_MK`, the first time. With a
 local copy of `duckdb.mk`, put the repository's `inspect/` directory beside
 it.
 

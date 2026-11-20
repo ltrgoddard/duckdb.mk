@@ -29,7 +29,7 @@ is "the command line's values" "$($MAKE -s DUCKDB="$DUCKDB" inspect SECRET=open 
   "{'REGION': south, 'SECRET': open}"
 is "macros" "$(j 'macros[1].file')" 'macros/m.sql'
 is "the page" "$(ls build/inspect | xargs)" \
-  'files index.html inspect.js inspect.json'
+  'files index.html inspect.json'
 
 $MAKE -s DUCKDB="$DUCKDB" build/s/a.parquet build/s/deep/Part > /dev/null
 t "the built tables are linked" "" -s inspect INSPECT_HIDE='^top$$'
@@ -49,4 +49,4 @@ is "files left" "$(j files) $(ls build/inspect/files/build/s | xargs)" \
 is "it does not read itself" "$(echo "from 'build/**/*.parquet'" > models/all.sql; \
   $MAKE -s DUCKDB="$DUCKDB" inspect 2>&1; j files)" '[build/s/a.parquet, data/x.csv]'
 is "another directory" "$($MAKE -s DUCKDB="$DUCKDB" inspect INSPECT=site/i; ls site/i | xargs)" \
-  'files index.html inspect.js inspect.json'
+  'files index.html inspect.json'

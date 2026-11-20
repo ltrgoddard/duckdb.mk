@@ -15,7 +15,7 @@ by      = $($@.by)
 src     = $(if $(by),$(@:$(BUILD)/%=models/%@$(by).sql),$<)
 flags   = $(if $(findstring =,$(firstword $(MAKEFLAGS))),,$(firstword -$(MAKEFLAGS)))
 quiet   = $(findstring s,$(flags))
-page   := $(addprefix $(dir $(self))inspect/,index.html inspect.js)
+page   := $(dir $(self))inspect/index.html
 passed  = $(foreach k,$(sort $(foreach m,$(models),$($m.env))),$(if $(findstring $(origin $k),file command line override),$k))
 recheck = $(if $(filter-out FORCE,$?)$(findstring B,$(flags)),,$(run) "$$FRESH" 2>/dev/null ||)
 
