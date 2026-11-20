@@ -61,6 +61,7 @@ inspect: $(page) $(wildcard inspect.js)
 	  done < $(INSPECT)/.ls && rm $(INSPECT)/.ls
 
 serve: inspect
+	@{ sleep 1 && python3 -m webbrowser http://localhost:8000/; } >/dev/null &
 	python3 -m http.server -d $(INSPECT) 8000
 
 $(page):
