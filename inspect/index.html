@@ -1474,20 +1474,22 @@ const tableRows = (table, types) => {
 // the status: how many rows and columns, in how long, with a button that
 // counts every row and one that downloads them as CSV
 const statusLine = ({sql, types, shown, started, more, current}) => {
-  const plural = n => n === 1 ? "" : "s"
+  const plural = n => n === 1 ? "" : "s", rows = shown.toLocaleString()
+  const ms = Math.round(performance.now() - started)
+  const text = (n, of) => `${n} row${plural(of)}, ${types.length} column${
+    plural(types.length)} in ${ms} ms `
+  const line = new Text(text(rows + (more ? "+" : ""), more ? 2 : shown))
   const count = element("button", {onclick: async event => {
     event.target.textContent = "Counting"
     const [{n}] = await rowsOf(`select count(*)::int n from ${
       inBrackets(sql)}`)
-    if (current()) event.target.replaceWith(`of ${n.toLocaleString()}`)
+    if (current()) line.data = text(`${rows} of ${n.toLocaleString()}`, n),
+      event.target.remove()
   }}, "Count")
   const csv = element("button", {className: "csv",
     title: "Download every row as CSV", onclick: () => downloadCsv(sql)},
     "CSV")
-  return [`${shown.toLocaleString()} row${plural(shown)}, ${types.length
-    } column${plural(types.length)} in ${Math.round(performance.now() -
-    started)} ms${more ? ", more below" : ""} `,
-    ...more || shown > PAGE_ROWS ? [count] : [], csv]
+  return [line, ...more || shown > PAGE_ROWS ? [count] : [], csv]
 }
 // every row as CSV, written in duckdb's files, then dropped so that the
 // next is new
