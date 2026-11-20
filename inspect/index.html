@@ -884,14 +884,21 @@ for (const m of nodes) m.attrs = {className: m.stale ? "old"
   : m.built || m.test ? "" : "off",
   style: `--s:${m.test ? "#808080"
     : HUES[groups.indexOf(m.group) % HUES.length]}`}
-const link = (id, a) => h("a", {href: "#" + encodeURIComponent(id),
-  dataset: {id}, className: by[id]?.attrs.className ?? ""}, a)
+// the filter matches a name or its schema (q), and hides a schema's
+// heading when it hides all of its names
+const link = (id, a, q = a) => h("a", {href: "#" + encodeURIComponent(id),
+  dataset: {id, q: q.toLowerCase()}, className: by[id]?.attrs.className ??
+  ""}, a)
 nav.append(link("", "All tables"), ...groups.flatMap(g => [
   h("h2", {}, label(g)), ...inG(g).map(m =>
-    link(m.id, m.id.replace(/^.*[./]/, "")))]))
-$("nav input").oninput = e => nav.querySelectorAll("a").forEach(a =>
-  a.hidden = !(a.textContent + " " + a.title).toLowerCase()
-    .includes(e.target.value.toLowerCase()))
+    link(m.id, m.id.replace(/^.*[./]/, ""), `${label(g)} ${m.id}`))]))
+$("nav input").oninput = e => {
+  const v = e.target.value.toLowerCase()
+  let any = 0
+  for (const x of [...nav.children].reverse())
+    x.tagName === "A" ? any |= !(x.hidden = !x.dataset.q.includes(v))
+    : x.tagName === "H2" && (x.hidden = !any, any = 0)
+}
 // j or down opens the next item in the list, k or up the one before; enter
 // on a step or a clause is a click
 addEventListener("keydown", e => {
