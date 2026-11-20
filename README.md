@@ -128,6 +128,17 @@ browser, with [DuckDB-Wasm](https://github.com/duckdb/duckdb-wasm), against
 the tables as Make last built them. It builds nothing: a model without a
 table shows as not built. See [REFERENCE.md](REFERENCE.md#inspector).
 
+## Agent skill
+
+[`skills/duckdb-mk/SKILL.md`](skills/duckdb-mk/SKILL.md) tells a coding agent
+how to build, test and hand over a duckdb.mk project. To install it for
+Claude Code in a project:
+
+```sh
+curl -sSfL --create-dirs -o .claude/skills/duckdb-mk/SKILL.md \
+  https://raw.githubusercontent.com/ltrgoddard/duckdb.mk/main/skills/duckdb-mk/SKILL.md
+```
+
 ## Development
 
 `./test.sh` runs the end-to-end tests in `test/` in parallel against real `make`
