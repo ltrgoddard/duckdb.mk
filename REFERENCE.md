@@ -274,16 +274,18 @@ all: inspect
   cannot run alone, and says so.
 - Every model and test is listed, and every table is linked: a table in a
   published page can be downloaded by its path.
-- Macros run in the browser in file order. A statement that fails there,
-  such as a setting or an extension that DuckDB-Wasm lacks, is skipped with
-  a warning in the console.
+- Macros run in the browser in file order, less the shell's dot commands. A
+  statement that fails is tried again after the others. One that still
+  fails, such as a setting or an extension that DuckDB-Wasm lacks, is
+  skipped with a warning in the console.
 - A step that reads a URL works only if the server allows cross-origin
   requests. Files outside the project, and paths built at run time, are not
   linked.
 - The page loads DuckDB-Wasm and
   [sql-formatter](https://github.com/sql-formatter-org/sql-formatter) from
   jsDelivr at fixed versions, so the first load needs a network connection.
-  DuckDB-Wasm has about 4 GB of memory and one thread.
+  DuckDB-Wasm has about 4 GB of memory and one thread, and cannot stop a
+  query: reload the page to stop a step that runs for too long.
 
 ## Steps that DuckDB cannot do
 

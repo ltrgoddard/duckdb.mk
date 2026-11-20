@@ -422,13 +422,15 @@ const scopeOf = (tokens, bracket) => {
     : clauses.find(at => tokens[at].word !== "with") ?? end}
 }
 // the ctes of a scope's with clause that a query at an index can read: all
-// of them from its main query, from inside one those before it
+// of them from its main query, from inside one those before it, and itself
+// if it is recursive
 const ctesFor = (tokens, scope, bracket, at) => {
   const first = next(tokens, scope.withAt)
   const recursive = tokens[first].word === "recursive"
   const start = recursive ? next(tokens, first) : first
   return {recursive, texts: splitAtCommas(tokens, start, scope.mainAt, bracket)
-    .filter(([, end]) => at >= scope.mainAt || end <= at)
+    .filter(([begin, end]) => at >= scope.mainAt || end <= at ||
+      recursive && begin <= at)
     .map(part => textOf(tokens, ...part))}
 }
 // the ctes that a query at an index can read, from its own scope outward
