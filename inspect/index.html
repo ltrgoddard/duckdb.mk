@@ -89,8 +89,10 @@ body.code .plan, body:not(.code) .plan:not(:empty) + pre { display: none; }
 .plan li:hover { border-color: var(--mute); }
 .plan li.on { border-color: var(--hi); background: var(--panel); }
 .plan ul { margin: 2px 0 0; padding-left: 1.2em; list-style: none; }
-.plan .name { color: #e6c07b; }
-#sql .plan .at { color: #98c379; overflow-wrap: anywhere; }
+/* the same colours in the steps as in the sql: a query's name green, a
+   string, such as a file's place, yellow, a number orange */
+#sql .name { color: #98c379; }
+#sql .plan .at { color: #e6c07b; overflow-wrap: anywhere; }
 .plan .fn, #sql span[title]:not([title=""]):not(.cl) {
   text-decoration: underline dotted var(--mute); text-underline-offset: .25em;
   cursor: help;
@@ -127,9 +129,11 @@ button:hover { color: var(--fg); }
   height: 8px; margin-bottom: -4px; cursor: row-resize;
 }
 .drag:hover, .drag.on { background: var(--hi); opacity: .5; }
-#status { padding: 6px 12px; color: var(--mute); font-size: 12px; }
-/* the count's button is no taller than the line, which keeps its height */
-#status button { margin: -4px 0; }
+/* as high with the count's button as without it */
+#status {
+  display: flex; align-items: center; gap: 6px; min-height: 36px;
+  padding: 4px 12px; color: var(--mute); font-size: 12px;
+}
 #status.err {
   color: var(--err); white-space: pre-wrap; font-family: var(--mono);
 }
@@ -376,12 +380,12 @@ const part = (ts, i) => {
 // a plan: a query's steps in the order that they run, in words. steps(ts,
 // ref) gives {d, t, i, cols}: a depth, a text, the clause that gives its
 // rows, and a select's columns. ref(ts, i) gives the models that the token
-// at i names, as {n, len}. a text marks a model's name, a query's and a
-// file's place (MARK) for the page to set apart
+// at i names, as {n, len}. a text marks a model's name, a query's, a
+// file's place and a literal of kind k (MARK) for the page to set apart
 
-const MARK = /([\x01-\x03][^\x04]*\x04)/
+const MARK = /([\x01-\x03\x05][^\x04]*\x04)/
 const MODEL = s => `\x01${s}\x04`, NAME = s => `\x02${s}\x04`
-const AT = s => `\x03${s}\x04`
+const AT = s => `\x03${s}\x04`, LIT = (k, s) => `\x05${k}${s}\x04`
 // a call in words
 const PH = Object.entries({
   "the number of rows": "count()", "the number of {0}": "count",
@@ -428,7 +432,7 @@ const SETS = {union: "Add the rows of", except: "Take away the rows of",
 const KW = new RegExp(`^(${[...K, ...MOD, "on", "using", "window"]
   .join("|")})$`)
 const fill = (t, a) => t.replace(/\{(\d)\}/g, (_, n) =>
-  (a[n] ?? "").replace(/^'(\w+)'$/, "$1"))
+  (a[n] ?? "").replace(/^\x05s'(\w+)'\x04$/, "$1"))
 
 const steps = (ts, ref) => {
   // sub names a query inside another, for words; the plan in hand sets it
@@ -463,7 +467,7 @@ const steps = (ts, ref) => {
           o += " among the rows where " + words(w + 1, ts[g].c), i = ts[g].c
         }
       } else if (x.t === "(" && holds(ts, i)) o += ` ${sub(i)} `, i = x.c
-      else o += x.t
+      else o += x.k === "s" || x.k === "n" ? LIT(x.k, x.t) : x.t
     }
     return o.replace(/\s+/g, " ").replace(/([([]) /g, "$1")
       .replace(/ ([)\],])/g, "$1")
@@ -948,6 +952,11 @@ try { view(localStorage["inspect.view"]) } catch { view() }
 const show = m => {
   const ts = m.fmt ??= pretty(m.body), pre = h("pre")
   const r = ref(m), to = n => h("a", {href: "#" + n.id, title: n.desc})
+  let plan = []
+  try { plan = steps(ts, r) } catch (e) { console.warn(m.id, e) }
+  // the queries that the steps name, to colour as they do
+  const names = new Set([...plan.flatMap(x => [x.t, ...x.cols ?? []]).join("")
+    .matchAll(/\x02([^\x04]*)\x04/g)].map(([, n]) => n.toLowerCase()))
   for (let i = 0; i < ts.length; i++) {
     const x = ts[i], f = r(ts, i)
     const t = ts.slice(i, i + (f?.len ?? 1)).map(x => x.t).join("")
@@ -957,18 +966,19 @@ const show = m => {
         dataset: {i}, title: "Run the query to here", onclick: () =>
           mark(i, f ? `from ${t}` : part(ts, i))}, t)
       : x.k === "_" || x.k === "p" ? t
-      : h("span", {className: x.k === "w" && K.has(x.w) ? "k" : x.k,
+      : h("span", {className: x.k !== "w" ? x.k : K.has(x.w) ? "k"
+        : names.has(x.w) && ts[i + 1]?.t !== "(" ? "name" : "w",
         title: ts[i + 1]?.t === "(" && FN[x.w] || ""}, t))
   }
-  let plan = []
-  try { plan = steps(ts, r) } catch (e) { console.warn(m.id, e) }
-  // a step's text: a model's name, a query's, a file's place, a call
+  // a step's text: a model's name, a query's, a file's place, a literal,
+  // a call
   const txt = t => t.split(MARK).flatMap((t, j) => {
     const s = t.slice(1, -1)
     return !(j % 2) ? t.split(/\b([a-z_]\w*)(?=\()/).map((t, j) =>
       j % 2 && FN[t] ? h("span", {className: "fn", title: FN[t]}, t) : t)
       : t[0] === "\x01" ? Object.assign(to(by[s]), {textContent: s})
       : t[0] === "\x02" ? h("span", {className: "name"}, s)
+      : t[0] === "\x05" ? h("span", {className: s[0]}, s.slice(1))
       : h(/^https?:/.test(s) ? "a" : "span", {className: "at", href: s}, s)
   })
   $("#code").replaceChildren(h("ol", {className: "plan"}, plan.map(x =>
