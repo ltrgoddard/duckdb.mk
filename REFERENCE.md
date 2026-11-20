@@ -148,6 +148,14 @@ Outputs are written to a temporary file or directory and moved into place, so
 a failed or interrupted build leaves the previous output, and the next run
 tries again.
 
+Each output also stores, under the keys `sql` and `commit`, the SQL that
+built it and `git describe --always --dirty` (empty outside a git
+repository). Neither is part of the fingerprint. To see what built a table:
+
+```sql
+select decode(key), decode(value) from parquet_kv_metadata('build/x.parquet')
+```
+
 ### Track an external run
 
 A model can read the output of a run outside duckdb.mk through an environment

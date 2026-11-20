@@ -106,6 +106,13 @@ t "parallel" "$all build/by_path.parquet $tests" -j8 all test
 t "parallel no-op" "" -j8
 is "row count" "$(q "select count(*) from 'build/seeds.parquet'")" 5
 is "fingerprint stored" "$(q "select count(*) from parquet_kv_metadata('build/remote.parquet') where decode(key) = 'duckdb.mk'")" 1
+kv() { q "select decode(value) from parquet_kv_metadata('$1') where decode(key) = '$2'"; }
+is "sql stored" "$(kv build/customers.parquet sql)" "from staging.customers"
+is "no commit outside git" "$(kv build/customers.parquet commit)" ""
+git init -q && git add models && git -c user.name=t -c user.email=t commit -qm m
+touch models/customers.sql && $MAKE -s DUCKDB="$DUCKDB" build/customers.parquet
+is "commit stored" "$(kv build/customers.parquet commit)" "$(git describe --always --dirty)"
+rm -rf .git
 t "BUILD" "build/elsewhere/customers.parquet build/elsewhere/staging/customers.parquet" \
   BUILD=build/elsewhere build/elsewhere/customers.parquet
 t "clean" "" clean

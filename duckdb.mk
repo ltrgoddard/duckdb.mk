@@ -16,6 +16,7 @@ src     = $(if $(by),$(@:$(BUILD)/%=models/%@$(by).sql),$<)
 flags   = $(if $(findstring =,$(firstword $(MAKEFLAGS))),,$(firstword -$(MAKEFLAGS)))
 quiet   = $(findstring s,$(flags))
 page   := $(dir $(self))inspect/index.html
+commit := $(shell git describe --always --dirty 2>/dev/null)
 passed  = $(foreach k,$(sort $(foreach m,$(models),$($m.env))),$(if $(findstring $(origin $k),file command line override),$k))
 recheck = $(if $(filter-out FORCE,$?)$(findstring B,$(flags)),,$(run) "$$FRESH" 2>/dev/null ||)
 
@@ -281,7 +282,8 @@ define MATERIALISE
 $(PRELUDE)
 set partitioned_write_max_open_files = 1e9;
 copy (from query(getvariable('sql'))) to '$@$(if $(by),.tmp)' (format parquet, write_partition_columns true, $(if $(PARQUET),$(PARQUET)$(,))
-  $(if $(by),partition_by "$(by)",use_tmp_file true), kv_metadata {'duckdb.mk': getvariable('fp')});
+  $(if $(by),partition_by "$(by)",use_tmp_file true), kv_metadata {
+  'duckdb.mk': getvariable('fp'), 'sql': getvariable('sql'), 'commit': '$(commit)'});
 $(if $(by),$(ONE))
 $(if $(quiet),,select format('{}: {:,} rows', '$@', count(*)) from '$(if $(by),$@.tmp/*/*.parquet,$@)';)
 endef
