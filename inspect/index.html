@@ -1100,19 +1100,32 @@ const joinSteps = (part, at) => {
     /^(on|using)$/.test(tokens[on].word))) on++
   const kind = modifiers.find(word => word in JOIN_STEPS && word) ?? ""
   const columns = next(tokens, on)
-  const condition = on >= to ? "" : tokens[on].word === "using"
-    ? "it has the same " + words(context, columns + 1,
-      tokens[columns].close ?? to)
-    : words(context, on + 1, to)
-  addStep(part, fillIn(JOIN_STEPS[kind], [tableOrQuery(part, from, on),
-    condition]).replace(/, where $/, ""), at)
+  const lines = on >= to ? [""] : tokens[on].word === "using"
+    ? ["it has the same " + words(context, columns + 1,
+      tokens[columns].close ?? to)]
+    : conditions(part, on + 1, to)
+  const text = fillIn(JOIN_STEPS[kind], [tableOrQuery(part, from, on),
+    lines.length > 1 ? "\0" : lines[0]]).replace(/, where $/, "")
+  addStep(part, text.replace(/,? where \0(.*)/, "$1, where:"), at,
+    lines.length > 1 ? {columns: lines} : {})
   for (const table of rest) addStep(part, pairStep(part, table), at)
 }
 // a filter, a line for each part between its ands and ors (but not a
 // between's); a row's place at most n is the first n rows. each part is
 // put in words once, so that a query inside it is made once
 const filterStep = (part, what, at) => {
-  const {context, tokens} = part, [from, to] = clauseBody(part, at)
+  const lines = conditions(part, ...clauseBody(part, at))
+  const first = lines.length === 1 && lines[0].match(FIRST_ROWS)
+  addStep(part, first ? `Keep the first ${first[3] > 1
+    ? markLiteral("n", first[3]) + " rows" : "row"}${first[1]
+    ? " of each " + first[1] : ""}, in order of ${first[2]}`
+    : `Keep the ${what} where${lines.length > 1 ? ":" : " " + lines[0]}`, at,
+    lines.length > 1 ? {columns: lines} : {})
+}
+// a condition, a line for each part between its ands and ors (but not a
+// between's), each put in words once
+const conditions = (part, from, to) => {
+  const {context, tokens} = part
   const cuts = [from]
   for (let scan = from, between = false; scan < to; scan++) {
     const {parent, word} = tokens[scan]
@@ -1121,14 +1134,8 @@ const filterStep = (part, what, at) => {
     else if (word === "and" && between) between = false
     else if (word === "and" || word === "or") cuts.push(scan)
   }
-  const lines = cuts.map((cut, n) => (n ? tokens[cut].word + " " : "") +
+  return cuts.map((cut, n) => (n ? tokens[cut].word + " " : "") +
     words(context, n ? cut + 1 : cut, cuts[n + 1] ?? to))
-  const first = lines.length === 1 && lines[0].match(FIRST_ROWS)
-  addStep(part, first ? `Keep the first ${first[3] > 1
-    ? markLiteral("n", first[3]) + " rows" : "row"}${first[1]
-    ? " of each " + first[1] : ""}, in order of ${first[2]}`
-    : `Keep the ${what} where${lines.length > 1 ? ":" : " " + lines[0]}`, at,
-    lines.length > 1 ? {columns: lines} : {})
 }
 // a group by: all, a rollup, a cube, grouping sets, or its columns
 const groupStep = (part, at) => {
