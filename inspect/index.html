@@ -77,7 +77,9 @@ pre {
   background: var(--bg);
 }
 .view button + button { margin-left: -1px; }
-.view button[aria-pressed=true] { color: var(--fg); border-color: var(--mute); }
+.view button[aria-pressed=true] {
+  position: relative; color: var(--fg); border-color: var(--mute);
+}
 body.code .plan, body:not(.code) .plan:not(:empty) + pre { display: none; }
 .plan { margin: 0; padding: 0; list-style: none; max-width: 80ch; }
 .plan li {
@@ -126,6 +128,8 @@ button:hover { color: var(--fg); }
 }
 .drag:hover, .drag.on { background: var(--hi); opacity: .5; }
 #status { padding: 6px 12px; color: var(--mute); font-size: 12px; }
+/* the count's button is no taller than the line, which keeps its height */
+#status button { margin: -4px 0; }
 #status.err {
   color: var(--err); white-space: pre-wrap; font-family: var(--mono);
 }
