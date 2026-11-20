@@ -24,9 +24,9 @@ is() {
   else echo "FAIL $1"; diff <(echo "$3") <(echo "$2") | grep '^[<>]' | head -20 | sed 's/^/     /'; fi
 }
 
-# deps <target>: the prerequisites the plan gives a target, sorted
+# deps <target>: the prerequisites the plan gives a target but its own file, sorted
 deps() {
-  $MAKE -s DUCKDB="$DUCKDB" build/plan.mk >/dev/null; sleep $nap; sed -n "s|^$1: ||p" build/plan.mk | sort | xargs
+  $MAKE -s DUCKDB="$DUCKDB" build/plan.mk >/dev/null; sleep $nap; sed -n "s|^$1: ||p" build/plan.mk | grep -vE "^(models|tests)/" | sort | xargs
 }
 
 # q <sql>: run a query in the project and print the rows

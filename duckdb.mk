@@ -7,9 +7,8 @@ DUCKDB_MK ?= main
 self   := $(lastword $(MAKEFILE_LIST))
 tree   := $(shell find models tests ! -path '* *' \( -type d -o -name '*.sql' \) 2>/dev/null)
 dirs   := $(filter-out %.sql,$(tree))
-macros := $(sort $(wildcard macros/*.sql))
 db     := $(DUCKDB) -init /dev/null -bail -list -noheader
-run    := $(db) -cmd '.output /dev/null' $(macros:%=-cmd '.read %') -cmd '.output' -c
+run     = $(db) -cmd '.output /dev/null' $(macros:%=-cmd '.read %') -cmd '.output' -c
 views   = $(foreach d,$^,$($d.view))
 by      = $($@.by)
 src     = $(if $(by),$(@:$(BUILD)/%=models/%@$(by).sql),$<)
@@ -17,7 +16,6 @@ flags   = $(if $(findstring =,$(firstword $(MAKEFLAGS))),,$(firstword -$(MAKEFLA
 quiet   = $(findstring s,$(flags))
 page   := $(dir $(self))inspect/index.html
 commit := $(shell git describe --always --dirty 2>/dev/null)
-passed  = $(foreach k,$(sort $(foreach m,$(models),$($m.env))),$(if $(findstring $(origin $k),file command line override),$k))
 recheck = $(if $(filter-out FORCE,$?)$(findstring B,$(flags)),,$(run) "$$FRESH" 2>/dev/null ||)
 
 all:
@@ -34,7 +32,7 @@ all: $(models)
 test: $(tests)
 .PHONY: $(tests)
 
-$(BUILD)/plan.mk: $(self) $(tree)
+$(BUILD)/plan.mk: $(self) $(tree) $(wildcard macros)
 	@mkdir -p $(@D) && $(db) -c "$$PLAN" > $@
 
 $(BUILD)/%.parquet: models/%.sql $(wildcard macros) $(macros)
@@ -55,11 +53,11 @@ shell: $(models)
 
 inspect: $(page)
 	@mkdir -p $(INSPECT) && cp $(page) $(INSPECT) && rm -f $(INSPECT)/inspect.json && \
-	  $(db) -cmd '.output /dev/null' -c "$$PLAN" -cmd '.output' -c "$$PAGE" > $(INSPECT)/.ls && \
-	  { cat $(BUILD)/plan.mk && sed -n 's/^P //p' $(INSPECT)/.ls; } > $(INSPECT)/plan.mk && \
-	  rm -rf $(INSPECT)/files && sed -n 's/^F //p' $(INSPECT)/.ls | while IFS= read -r f; do \
-	  t="$(INSPECT)/files/$$f" && mkdir -p "$$(dirname "$$t")" && \
-	  { ln -f "$$f" "$$t" 2>/dev/null || cp "$$f" "$$t"; }; done && rm $(INSPECT)/.ls
+	  $(db) -cmd '.output $(BUILD)/plan.mk' -c "$$PLAN" -cmd '.output' -c "$$LS" > $(INSPECT)/.ls && \
+	  rm -rf $(INSPECT)/files $(INSPECT)/plan.mk && { ln $(BUILD)/plan.mk $(INSPECT) 2>/dev/null || \
+	  cp $(BUILD)/plan.mk $(INSPECT); } && while IFS= read -r f; do t="$(INSPECT)/files/$$f" && \
+	  mkdir -p "$$(dirname "$$t")" && { ln -f "$$f" "$$t" 2>/dev/null || cp "$$f" "$$t"; }; \
+	  done < $(INSPECT)/.ls && rm $(INSPECT)/.ls
 
 serve: inspect
 	@{ sleep 1 && python3 -m webbrowser http://localhost:8000/; } >/dev/null &
@@ -206,6 +204,21 @@ union select s, target from str where regexp_full_match(s, '[\w./*?~-]+\.\w+')
   and lower(s) not in (select schema || '.' || name from src)
 union select x, target from vol where k = 'sources';
 
+set variable globs = (
+  select coalesce(list(distinct p), []) || ['$(BUILD)/.none']
+  from (
+    select out from src where kind = 'models' and col <> ''
+    union all select s from pat
+  ) as t(p)
+  where not regexp_matches(p, '^[/~]|\.\./')
+);
+create table found as
+select m.target as t, f.file as x
+from glob(getvariable('globs')) as f
+join (select target, out as re from src where col <> '' union all select target, re from pat) as m
+  on if(m.target in (select target from src where col <> ''), f.file glob m.re, regexp_full_match(f.file, m.re))
+where not starts_with(f.file, '$(INSPECT)/');
+
 create table vert as
 select n, 'n' || row_number() over (order by n) as id, coalesce(any_value(s), '[("' || replace(n, '"', '#quot;') || '")]') as s
 from (
@@ -244,10 +257,14 @@ from (
   union all
   select target || ': FORCE' from vol
   union all
-  select unnest([target || ': ' || file, target || '.by := ' || col]) from src where col <> ''
+  select target || ': ' || file from src
+  union all
+  select target || '.by := ' || col from src where col <> ''
   union all
   select target || '.' || k || ' += ' || replace(replace(replace(x, '''', ''''''), '$$', '$$$$'), '#', '\#')
-  from vol
+  from (select target, k, x from vol union all select t, 'files', x from found)
+  union all
+  select 'macros += ' || file from glob('macros/*.sql')
 ) as t(line)
 order by line;
 endef
@@ -303,51 +320,17 @@ having count(*) > 0;
 $(if $(quiet),,select '$@: pass';)
 endef
 
-define PAGE
+define LS
 set variable globs = (
   select list(distinct p)
   from (
     select out from src where kind = 'models'
-    union all
-    select d from arc join src on target = t where '$(INSPECT_HIDE)' = '' or not regexp_matches(if(kind = 'tests', target, if(schema = 'main', '', schema || '.') || name), '$(INSPECT_HIDE)')
+    union all select d from arc
+    union all select unnest(['models/**/*.sql', 'tests/**/*.sql', 'macros/*.sql'])
   ) as t(p)
   where not regexp_matches(p, '^[/~]|\.\./|://')
 );
-set variable files = (
-  select coalesce(list(distinct file order by file), [])
-  from glob(getvariable('globs'))
-  where not starts_with(file, '$(INSPECT)/')
-);
-set variable parquet = list_filter(getvariable('files'), lambda f: f like '%.parquet');
-set variable kv = if(len(getvariable('parquet')) > 0,
-  'select file_name as f, decode(value) as s from parquet_kv_metadata(getvariable(''parquet'')) where decode(key) = ''sql''',
-  'select '''' as f, '''' as s limit 0');
-create table kv as from query(getvariable('kv'));
-create macro esc(x) as replace(replace(x, '$$', '$$$$'), '#', '\#');
-select line
-from (
-  select 'F ' || f from unnest(getvariable('files')) as t(f)
-  union all
-  select 'F ' || file from glob(['models/**/*.sql', 'tests/**/*.sql', 'macros/*.sql'])
-  union all
-  select 'P ' || unnest([
-    'inspect.title := ' || esc('$(notdir $(CURDIR))'),
-    'inspect.hide := ' || esc('$(INSPECT_HIDE)')
-  ])
-  union all
-  select 'P inspect.files += ' || esc(f) from unnest(getvariable('files')) as t(f)
-  union all
-  select 'P inspect.macros += ' || file from glob('macros/*.sql')
-  union all
-  select 'P ' || target || '.file := ' || file from src
-  union all
-  select 'P ' || target || '.stale := true'
-  from src join read_text(['models/**/*.sql', 'tests/**/*.sql']) as r on r.filename = src.file
-  where exists (from kv where f glob src.out and s <> r.content)
-  union all
-  select 'P ' || k || ' := ' || esc(getenv(k))
-  from unnest(regexp_extract_all('$(passed)', '\S+')) as t(k)
-) as t(line);
+select distinct file from glob(getvariable('globs')) where not starts_with(file, '$(INSPECT)/') order by file;
 endef
 
-export PLAN FRESH MATERIALISE ASSERT PAGE
+export PLAN FRESH MATERIALISE ASSERT LS

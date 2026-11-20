@@ -205,11 +205,9 @@ models with a target-specific export:
 build/gem/%: export RAW_URI = s3://bucket/gem/2026-11-01
 ```
 
-Never put a credential in the Makefile, a model, a macro or a command line.
-The inspector writes the values that the Makefile or the command line sets
-into the inspector's `plan.mk`, which can be published. Leave credentials in the shell's
-environment, where the inspector does not look, and create DuckDB secrets
-from them in a macro if needed.
+Never put a credential in a model, a macro or a file that make links for the
+inspector, which can be published. Leave credentials in the shell's
+environment and create DuckDB secrets from them in a macro if needed.
 
 ## Build and verify
 

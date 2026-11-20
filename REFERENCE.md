@@ -24,7 +24,6 @@ All directories are optional. Run `make` from the project root.
 | `BUILD`  | `build`  | Output directory            |
 | `PARQUET` | none    | Extra Parquet writer options, e.g. `compression zstd, row_group_size 10000` |
 | `INSPECT` | `$(BUILD)/inspect` | Directory of the inspector's page |
-| `INSPECT_HIDE` | none | Regular expression of the models and tests that the inspector leaves out |
 
 Set them before the `include` or on the command line. `PARQUET` can also be
 set for one model or a group of them with a target-specific variable:
@@ -224,13 +223,13 @@ the page, one HTML file, at the version in `DUCKDB_MK`, the first time. With a
 local copy of `duckdb.mk`, put the repository's `inspect/` directory beside
 it.
 
-The page builds no model. Each run writes `plan.mk` beside the page: the
-plan that make reads, and lines that the page needs as well, in the same
-form (the title, `INSPECT_HIDE`, the files linked, the macros, each node's
-file, the stale tables and the variables' values). It links into
-`$(INSPECT)/files` the SQL of the models, tests and macros, every built
-table and every local file that a model names, by hard link, or by copy on
-another filesystem. The page reads the SQL from these files. A model without
+The page builds no model, and make writes nothing for it but the plan.
+Each run writes `$(BUILD)/plan.mk` again, so that its lines that name the
+files of a partitioned table, and of a pattern that a model reads, are
+current, and links it beside the page. It links into `$(INSPECT)/files` the
+SQL of the models, tests and macros, every built table and every local file
+that a model names, by hard link, or by copy on another filesystem. The page
+reads the plan and these files as they are. A model without
 a table shows as not built, and its SQL and steps can still be read.
 `$(INSPECT)` is a static site. To publish it, set `INSPECT` to a directory of
 a site, such as `site/inspect`. To build before each write, and to write on
@@ -246,16 +245,12 @@ all: inspect
 - A query shows as steps in words or as its SQL, as last chosen. A click on
   a step or a clause runs the query to it and marks it in both.
 - A test shows the rows that fail it.
-- A model whose table stores SQL that differs from its file is in italics,
-  and its page says to rebuild it: its rows are from the earlier version.
-- `getenv` returns a variable's value in the page only if the Makefile or
-  the `make` command line sets it. A value from the shell's environment,
-  where secrets are, is never written to `plan.mk`, and is an empty
-  string in the page. So is a target-specific value.
-- `INSPECT_HIDE` leaves the matching models and tests out of the list and
-  the graph, and does not link the files that only they name. Their tables
-  are still linked, because the steps of other models read them: a hidden
-  table in a published page can be downloaded by its path.
+- A model whose table stores SQL that differs from its file says to
+  rebuild it when it is opened: its rows are from the earlier version.
+- `getenv` returns an empty string in the page. No variable's value is
+  written for it.
+- Every model and test is listed, and every table is linked: a table in a
+  published page can be downloaded by its path.
 - Macros run in the browser in file order. A statement that fails there,
   such as a setting or an extension that DuckDB-Wasm lacks, is skipped with
   a warning in the console.

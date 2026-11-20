@@ -58,7 +58,6 @@ nav a {
   overflow: hidden; text-overflow: ellipsis;
 }
 nav a.off, .dag a.off { color: var(--mute); }
-nav a.old, .dag a.old { font-style: italic; }
 nav a:hover, nav a.on { color: var(--hi); }
 main {
   grid-area: main; min-width: 0; display: grid;
@@ -1472,10 +1471,10 @@ const downloadCsv = async sql => {
 
 // project ---------------------------------------------------------------------
 
-// the project, from plan.mk beside the page: make's plan, and what make
-// inspect adds to it (inspect.*, each node's file, a stale table, the
-// variables' values), read as make reads it; each node's sql and each
-// macro's from its file
+// the project, from make's plan.mk beside the page, read as make reads it:
+// its models and tests, each one's file, the models that it reads, its
+// sources and its table's files; each node's sql and each macro's from its
+// file. a model is built if its table's file is there
 
 // plan.mk's variables (name += value, a list; name := value) and its rules
 // (target: prerequisite)
@@ -1505,11 +1504,13 @@ const readNodes = ({variables, rules}) => {
   for (const target of [...variables.models ?? [], ...variables.tests ?? []]) {
     const view = variables[target + ".view"]
       ?.match(/view "([^"]*)"\."([^"]*)" as from '(.*)';$/)
-    byTarget[target] = {target, test: !view, file: variables[target + ".file"],
+    byTarget[target] = {target, test: !view,
+      file: rules.find(([from, to]) => from === target && /\.sql$/.test(to))
+        ?.[1],
       id: view ? view[1] === "main" ? view[2] : `${view[1]}.${view[2]}`
         : target,
       out: view?.[3] ?? target, by: variables[target + ".by"],
-      env: list(target + ".env"), stale: !!variables[target + ".stale"],
+      files: list(target + ".files"), env: list(target + ".env"),
       reads: [], sources: list(target + ".sources").filter(source =>
         !/[*?]/.test(source) || !variables.models?.some(model =>
           source.startsWith(model.split("/")[0] + "/")))}
@@ -1531,34 +1532,37 @@ await Promise.all(nodes.map(async node => {
   node.reads = [...new Set(node.reads)].sort()
   node.sources = [...new Set(node.sources)].sort()
 }))
-const {variables} = planFile
-const project = {title: variables["inspect.title"],
-  hide: variables["inspect.hide"], files: variables["inspect.files"] ?? [],
-  env: Object.fromEntries(nodes.flatMap(node => node.env)
-    .filter(name => name in variables)
-    .map(name => [name, variables[name]])),
-  macros: await Promise.all((variables["inspect.macros"] ?? [])
+// the title: the directory that holds the page's, as in a site's
+// <project>/inspect/, else "Inspect"
+const directories = location.pathname.split("/").slice(0, -1).filter(Boolean)
+if (directories.at(-1) === "inspect") directories.pop()
+const project = {title: decodeURIComponent(directories.at(-1) ?? "Inspect"),
+  macros: await Promise.all((planFile.variables.macros ?? [])
     .map(async file => ({file, sql: await fileText(file)})))}
 const byId = Object.fromEntries(nodes.map(node => [node.id, node]))
+// whether a file is there, without reading it
+const exists = async path =>
+  (await fetch("files/" + path, {method: "HEAD"}).catch(() => ({}))).ok
 
-// the files by the paths that the sql names, the variables that the
-// makefile sets and the macros, as in make, less the shell's dot commands;
-// each built model a view on its table, made when a model that reads it is
-// opened, since making it reads the table's file
+// the files by the paths that the sql names (a table's, and each local
+// source's) and the macros, as in make, less the shell's dot commands; each
+// built model a view on its table, made when a model that reads it is
+// opened, since making it reads the table's file. getenv() is empty: no
+// variable's value is written for the page
 const literal = value => `'${String(value).replaceAll("'", "''")}'`
 const quoted = name => `"${name.replaceAll('"', '""')}"`
 const glob = pattern => new RegExp("^" + pattern
   .replace(/[.+^$()|[\]\\{}]/g, "\\$&")
   .replace(/\*\*\/|\*|\?/g, wildcard =>
     ({"*": "[^/]*", "?": "[^/]"})[wildcard] ?? "(.*/)?") + "$")
-await Promise.all(project.files.map(path =>
-  registerFile(path, "files/" + path)))
+const LOCAL = path => !/^[/~]|\.\.\/|:\/\/|[*?]/.test(path)
+await Promise.all([...new Set(nodes.flatMap(node => [...node.files,
+  ...node.sources, ...node.test ? [] : [node.out]]).filter(LOCAL))]
+  .map(path => registerFile(path, "files/" + path)))
 // geoparquet's geometry as its bytes: duckdb-wasm's spatial fails on some
 // files' metadata ("stoi: no conversion")
 await query("set enable_geoparquet_conversion = false")
-await query(`create macro getenv(k) as coalesce(map {'': ''${Object.entries(
-  project.env).map(([name, value]) => `, ${literal(name)}: ${literal(value)}`)
-  .join("")}}[k], '')`)
+await query("create macro getenv(k) as ''")
 for (const node of nodes) {
   const header = node.sql.match(/^(--( .*)?\n)*/)[0]
   const [schema, table] = node.id.includes(".") ? node.id.split(".")
@@ -1569,9 +1573,14 @@ for (const node of nodes) {
   node.group = node.test ? "test" : schema
   node.reads = new Set(node.reads.map(id => byId[id]))
   node.view = `${quoted(schema)}.${quoted(table)}`, node.schema = quoted(schema)
-  node.built = !node.test && project.files.some(path =>
-    glob(node.out).test(path))
 }
+await Promise.all(nodes.map(async node => node.built = !node.test &&
+  (LOCAL(node.out) ? await exists(node.out) : node.files.length > 0)))
+// whether a table stores sql that differs from its model's file
+const isStale = async node => node.built && (await rowsOf(`select
+  bool_or(decode(value) <> ${literal(node.sql)}) stale
+  from parquet_kv_metadata(${literal(node.out)})
+  where decode(key) = 'sql'`).catch(() => [{}]))[0].stale === true
 const makeViews = node => Promise.all([...upstream(node), node]
   .filter(other => other.built).map(other => other.made ??= query(
     `create schema if not exists ${other.schema};
@@ -1624,22 +1633,20 @@ const narrow = matchMedia("(max-width: 860px)")
 const nav = find("nav"), head = find("header"), out = find("#rows")
 const run = rowsView(find("#status"), out)
 
-// the list: the nodes that INSPECT_HIDE does not name, by schema. the
+// the list: every node, by schema. the
 // schemas are in the graph's order, left to right: by the mean number of
 // tables before theirs, the schema with more tables first when that is the
 // same, and the tests last. a schema's colour is its place in that order
-const HIDDEN = new RegExp(project.hide || "^$")
 const HUES = ["#e6c07b", "#61afef", "#98c379", "#c678dd", "#56b6c2",
   "#d19a66", "#e06c75", "#abb2bf"]
 const label = group => group === "test" ? "tests" : group
-const shown = nodes.filter(node => !HIDDEN.test(node.id))
-const inGroup = group => shown.filter(node => node.group === group)
+const inGroup = group => nodes.filter(node => node.group === group)
 const meanDepth = group => group === "test" ? Infinity : inGroup(group)
   .reduce((sum, node) => sum + upstream(node).size, 0) / inGroup(group).length
-const groups = [...new Set(shown.map(node => node.group))].sort((a, b) =>
+const groups = [...new Set(nodes.map(node => node.group))].sort((a, b) =>
   meanDepth(a) - meanDepth(b) || inGroup(b).length - inGroup(a).length)
-for (const node of nodes) node.attrs = {className: node.stale ? "old"
-  : node.built || node.test ? "" : "off", style: `--s:${node.test ? "#808080"
+for (const node of nodes) node.attrs = {className: node.built || node.test
+  ? "" : "off", style: `--s:${node.test ? "#808080"
   : HUES[groups.indexOf(node.group) % HUES.length]}`}
 
 // the list's links; the filter matches a name or its schema, and hides a
@@ -1806,19 +1813,20 @@ const openNode = async () => {
   if (!id) return head.replaceChildren(element("h1", {}, project.title),
     element("p", {className: "legend"}, groups.map(group => element("span",
       {style: inGroup(group)[0].attrs.style}, label(group)))),
-    lineage(shown))
+    lineage(nodes))
   head.replaceChildren(element("h1", {}, id))
   if (!node)
     return find("#code").replaceChildren(), run.say("Not in this project")
   head.append(...[node.desc && element("p", {}, node.desc),
     node.note && element("p", {className: "note"}, node.note),
-    node.stale && element("p", {className: "note"},
-      `Its table is from an earlier version: make ${node.target}`),
     element("p", {className: "file"}, node.file,
       ...node.env.map(name => element("span", {}, "$" + name))),
-    lineage([...upstream(node), node, ...downstream(node)].filter(other =>
-      other === node || !HIDDEN.test(other.id)), node)].filter(Boolean))
+    lineage([...upstream(node), node, ...downstream(node)], node)]
+    .filter(Boolean))
   showQuery(node), await makeViews(node)
+  if (await isStale(node) && decodeURIComponent(location.hash.slice(1)) === id)
+    head.querySelector(".file").before(element("p", {className: "note"},
+      `Its table is from an earlier version: make ${node.target}`))
   node.built ? run(`from ${node.view}`)
     : !node.test ? run.say(`Not built: make ${node.target}`)
     : [...node.reads].every(other => other.built) ? run(node.body)
