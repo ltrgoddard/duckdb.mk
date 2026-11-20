@@ -9,8 +9,6 @@ files; duckdb.mk parses them into a dependency graph using DuckDB's
 `json_serialize_sql` function and builds a corresponding directory of Parquet
 tables.
 
-![The inspector: a model's lineage, its query as steps in words, and its rows](docs/inspect.png)
-
 DuckDB and Make are both wonderful 'Swiss army knife' tools -- together, they
 make it extremely easy to build multi-stage data pipelines querying local and
 external sources, e.g. for research or analytical dashboards. duckdb.mk is a
@@ -20,6 +18,11 @@ working on data journalism and research projects at NGOs.
 See [`example/`](example/) for a duckdb.mk project that analyses methane
 emissions using public data and [docs/REFERENCE.md](docs/REFERENCE.md) for the full
 interface.
+
+![The inspector: a model's lineage, its query as steps in words, and its rows](docs/inspect.png)
+
+*A [Data Desk](https://datadesk.eco) project built with duckdb.mk, viewed
+with `make serve`*
 
 ## Compared with other tools
 
