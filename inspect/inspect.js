@@ -2,11 +2,582 @@
 // the plan has it, and each one's sql, run in the browser a clause at a
 // time over the tables as make last built them. inspect.json (make inspect)
 // holds the nodes, the macros and the files; a file is at files/<its path>
-import {query, sql, file} from "./db.js"
-import {K, lex, pretty, part, statements, query as holds} from "./sql.js"
-import {steps, MARK} from "./plan.js"
-import {dag} from "./dag.js"
-import {grid, h} from "./rows.js"
+import {formatDialect, duckdb as dialect} from
+  "https://cdn.jsdelivr.net/npm/sql-formatter@15.9.0/+esm"
+
+// duckdb in the browser: duckdb-wasm and its worker from jsdelivr, at one
+// version. file() names a url as the path that the sql reads it by
+const V = "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.33.1-dev114.0/"
+const duckdb = await import(V + "+esm")
+const db = new duckdb.AsyncDuckDB(new duckdb.VoidLogger, new Worker(
+  URL.createObjectURL(new Blob([`importScripts("${V
+  }dist/duckdb-browser-base.worker.js")`], {type: "text/javascript"}))))
+await db.instantiate(V + "dist/duckdb-base.wasm")
+const c = await db.connect()
+const query = s => c.query(s)
+const sql = async s => (await c.query(s)).toArray()
+const file = (path, url) => db.registerFileURL(path,
+  new URL(url, location).href, duckdb.DuckDBDataProtocol.HTTP, false)
+
+// sql as tokens, and the part of a query that gives the rows at a clause
+
+// a token: k its kind (comment, string, quoted name, number, word, space,
+// punctuation), w a word in lower case, o the bracket that it is in (-1 at
+// the top), and for a bracket c its close; a clause keyword (cl) starts a
+// part of a query
+const re = new RegExp(["(--[^\\n]*|/\\*[\\s\\S]*?\\*/)",
+  "([eE]'(?:[^'\\\\]|\\\\.|'')*'|'(?:[^']|'')*')", '("(?:[^"]|"")*")',
+  "(\\d[\\w.]*)", "([A-Za-z_][\\w$]*)", "(\\s+)", "([\\s\\S])"].join("|"), "g")
+const set = s => new Set(s.split(" "))
+const K = set("with select from where group having qualify order " +
+  "limit join union except intersect")
+const SET = set("union except intersect")
+const MOD = set("left right inner outer full cross natural semi anti " +
+  "asof positional")
+const skip = d => (ts, i) => {
+  do i += d; while (ts[i]?.k in {c: 1, _: 1})
+  return i
+}
+const nx = skip(1), pv = skip(-1)
+const lex = s => {
+  const ts = [], st = []
+  for (const m of s.matchAll(re)) {
+    const t = m[0], k = "csqnw_p"[m.slice(1).findIndex(x => x != null)]
+    if (")]}".includes(t) && st.length) ts[st.pop()].c = ts.length
+    ts.push({t, k, w: k === "w" ? t.toLowerCase() : null, o: st.at(-1) ?? -1})
+    if ("([{".includes(t)) st.push(ts.length - 1)
+  }
+  ts.forEach((x, i) => x.cl = K.has(x.w) && !(
+    (x.w === "group" || x.w === "order") && ts[nx(ts, i)]?.w !== "by" ||
+    x.w === "from" && ts[pv(ts, i)]?.w === "distinct" ||
+    x.w === "with" && ts[pv(ts, i)] && ts[pv(ts, i)].t !== "("))
+  return ts
+}
+// the text from a to b, less comments
+const tx = (ts, a, b) =>
+  ts.slice(a, b).map(x => x.k === "c" ? " " : x.t).join("").trim()
+// whether the bracket g holds a query
+const holds = (ts, g) =>
+  ["with", "select", "from"].includes(ts[nx(ts, g)]?.w)
+// the stretches between the commas of the bracket g, from a to b
+const split = (ts, a, b, g) => {
+  const r = []
+  for (let j = a, c = a; j <= b; j++)
+    if (j === b || ts[j].o === g && ts[j].t === ",") r.push([c, j]), c = j + 1
+  return r
+}
+// the statements of a file
+const statements = s => {
+  const ts = lex(s), e = ts.flatMap((x, j) => x.t === ";" && x.o < 0 ? [j] : [])
+  return [...e, ts.length].map((j, k) => tx(ts, (e[k - 1] ?? -1) + 1, j))
+    .filter(Boolean)
+}
+// a column: where its expression ends, and its name if it has one
+const cut = (ts, u, v) => {
+  const e = pv(ts, v), p = pv(ts, e), x = ts[e]
+  return p >= u && (x.k === "w" || x.k === "q") &&
+    !/^(end|null|true|false)$/.test(x.w) && (ts[p].w === "as" ||
+    ts[p].k !== "p" || /[)\]'"]/.test(ts[p].t)) && ts[p].t !== "."
+    ? [ts[p].w === "as" ? p : e, x.t] : [v, null]
+}
+
+// sql laid out, as tokens: lower case, two spaces, no space before the "("
+// of a call that the formatter does not know (a macro), strings that follow
+// each other, which the formatter puts on one line, as one, and a row
+// written by hand (values) on one line; as written if the formatter fails
+const KEEP = set("in as and or not exists over filter using on values from " +
+  "join select where when then else by all any some recursive union except " +
+  "intersect lateral is with case like")
+const pretty = s => {
+  try {
+    const a = [...formatDialect(s, {dialect, keywordCase: "lower",
+      dataTypeCase: "lower", functionCase: "lower", expressionWidth: 72})
+      .matchAll(re)], str = m => m?.[0][0] === "'"
+    s = a.map((m, i) => m[0] === " " && a[i - 1]?.[5] &&
+      !KEEP.has(a[i - 1][0].toLowerCase()) && a[i + 1]?.[0] === "(" ? ""
+      : m[6] && str(a[i - 1]) && str(a[i + 1]) ? ""
+      : str(m) ? m[0].slice(+!!(str(a[i - 2]) && a[i - 1][6]),
+        str(a[i + 2]) && a[i + 1][6] ? -1 : undefined) : m[0]).join("")
+  } catch {}
+  const ts = lex(s)
+  ts.forEach((x, i) => x.w === "values" && ts.forEach((r, j) => {
+    if (j < i || r.o !== x.o || r.t !== "(") return
+    for (let k = j + 1; k < r.c; k++) if (ts[k].k === "_")
+      ts[k].t = k === j + 1 || k === r.c - 1 ? "" : " "
+  }))
+  return ts
+}
+
+// a query's level: the tokens in the "(" g, its clauses, and its with
+// clause from W to its main query at m
+const level = (ts, g) => {
+  const a = g + 1, b = g < 0 ? ts.length : ts[g].c ?? ts.length, cl = []
+  for (let j = a; j < b; j++) ts[j].o === g && ts[j].cl && cl.push(j)
+  const W = ts[cl[0]]?.w === "with" ? cl[0] : -1
+  return {a, b, cl, W, m: W < 0 ? a : cl.find(j => ts[j].w !== "with") ?? b}
+}
+// the ctes of a level's with clause that a query at p can read: all of
+// them from its main query, those before p's own from inside one
+const ctes = (ts, l, g, p) => {
+  const a = nx(ts, l.W), s = ts[a].w === "recursive" ? nx(ts, a) : a
+  const r = split(ts, s, l.m, g).filter(([, j]) => p >= l.m || j <= p)
+  return {r: r.map(u => tx(ts, ...u)), rec: s !== a}
+}
+// the sql that gives the rows at clause i: its query up to the next
+// clause, each table so far (select *, else its own select list, whose
+// names a where may use) for a from, join or where, and the ctes it can
+// read; a list of tries
+const part = (ts, i) => {
+  const g = ts[i].o, l = level(ts, g), w = ts[i].w
+  const whole = w === "with" || SET.has(w)
+  let q
+  if (whole) q = [tx(ts, l.m, l.b)]
+  else {
+    const cl = l.cl.filter(j => j >= l.m)
+    let s = (cl.filter(j => j < i && SET.has(ts[j].w)).at(-1) ?? l.m - 1) + 1
+    while (["all", "distinct", "by", "name"].includes(ts[nx(ts, s - 1)].w))
+      s = nx(ts, s - 1) + 1
+    const e = cl.find(j => j > i && SET.has(ts[j].w)) ?? l.b
+    const sc = cl.filter(j => j >= s && j < e), fr = sc.includes(i) &&
+      ["from", "join"].includes(w)
+    let end = sc.find(j => j > i && (fr || ts[j].w !== "join")) ?? e
+    if (ts[end]?.w === "join")
+      while (MOD.has(ts[pv(ts, end)]?.w)) end = pv(ts, end)
+    const sel = ts[sc[0]].w === "select"
+    q = sel && w === "select" ? [tx(ts, s, e)]
+      : sel && ["from", "join", "where"].includes(w)
+      ? ["select * " + tx(ts, sc.find(j => ts[j].w === "from"), end),
+        tx(ts, s, end)] : [tx(ts, s, end)]
+  }
+  const cs = []
+  let rec = false
+  for (let G = g, p = whole ? l.m : i; ; p = G, G = ts[G].o) {
+    const lv = G === g ? l : level(ts, G)
+    if (lv.W >= 0 && p > lv.W) {
+      const x = ctes(ts, lv, G, p)
+      cs.unshift(...x.r), rec ||= x.rec
+    }
+    if (G < 0) break
+  }
+  return q.map(q => cs.length ? `with ${rec ? "recursive " : ""}${
+    cs.join(",\n")}\n${q}` : q)
+}
+
+// a plan: a query's steps in the order that they run, in words. steps(ts,
+// ref) gives {d, t, i, cols}: a depth, a text, the clause that gives its
+// rows, and a select's columns. ref(ts, i) gives the models that the token
+// at i names, as {n, len}. a text marks a model's name, a query's and a
+// file's place (MARK) for the page to set apart
+
+const MARK = /([\x01-\x03][^\x04]*\x04)/
+const MODEL = s => `\x01${s}\x04`, NAME = s => `\x02${s}\x04`
+const AT = s => `\x03${s}\x04`
+// a call in words
+const PH = Object.entries({
+  "the number of rows": "count()", "the number of {0}": "count",
+  "the total of {0}": "sum", "the mean of {0}": "avg mean",
+  "the median of {0}": "median", "the lowest {0}": "min",
+  "the highest {0}": "max", "any {0}": "any_value", "the first {0}": "first",
+  "the {0} with the highest {1}": "arg_max max_by",
+  "the {0} with the lowest {1}": "arg_min min_by",
+  "the list of {0}": "list array_agg", "{0} joined by {1}": "string_agg",
+  "whether any {0}": "bool_or", "whether every {0}": "bool_and",
+  "{1} if {0}, else {2}": "if iff", "{0}, null if {1}": "nullif",
+  "{0} rounded": "round", "{0} rounded down": "floor",
+  "{0} rounded up": "ceil", "the size of {0}": "abs",
+  "each of {0}": "unnest", "the length of {0}": "len length array_length",
+  "the year of {0}": "year", "the month of {0}": "month",
+  "{0} as {1}": "strftime", "{1} to the {0}": "date_trunc",
+  "the {0}s from {1} to {2}": "date_diff datediff date_sub",
+  "{0} with {1} as {2}": "replace regexp_replace",
+  "{0} matches {1}": "regexp_matches",
+  "the part of {0} that matches {1}": "regexp_extract",
+  "{0} starts with {1}": "starts_with",
+  "{0} contains {1}": "contains list_contains",
+  "part {2} of {0} split at {1}": "split_part",
+  "{0} split at {1}": "string_split", "{0}": "lower upper trim strip",
+  "the previous {0}": "lag", "the next {0}": "lead",
+  "the row's place": "row_number()", "the rank": "rank() dense_rank()",
+  "the distance from {0} to {1}": "st_distance",
+  "{0} meets {1}": "st_intersects", "{0} is within {2} of {1}": "st_dwithin"
+}).reduce((o, [t, fs]) => (fs.split(" ").forEach(f => o[f] = t), o), {})
+const AGG = new RegExp(`^(${("count sum avg mean median min max any_value " +
+  "first arg_max max_by arg_min min_by list array_agg string_agg bool_or " +
+  "bool_and").split(" ").join("|")})$`)
+const JOIN = {"": "Join {0}, where {1}", inner: "Join {0}, where {1}",
+  left: "Join {0} where {1}, keeping the rows with no match",
+  semi: "Keep the rows with a match in {0}, where {1}",
+  anti: "Keep the rows with no match in {0}, where {1}",
+  cross: "Pair each row with every row of {0}",
+  asof: "Join {0} at the nearest match, where {1}",
+  positional: "Join {0} row by row"}
+const FILE = {csv: "CSV file", parquet: "Parquet file", text: "text file",
+  json: "JSON file", ndjson: "JSON file", undefined: "map file"}
+const SETS = {union: "Add the rows of", except: "Take away the rows of",
+  intersect: "Keep only the rows also in"}
+const KW = new RegExp(`^(${[...K, ...MOD, "on", "using", "window"]
+  .join("|")})$`)
+const fill = (t, a) => t.replace(/\{(\d)\}/g, (_, n) =>
+  (a[n] ?? "").replace(/^'(\w+)'$/, "$1"))
+
+const steps = (ts, ref) => {
+  // sub names a query inside another, for words; the plan in hand sets it
+  let sub
+  const words = (a, b) => {
+    let o = ""
+    for (let i = a; i < b; i++) {
+      const x = ts[i], r = ref(ts, i), p = ts[nx(ts, i)]?.t === "(" && nx(ts, i)
+      if (x.k === "c") continue
+      if (r) o += r.n.length === 1 ? MODEL(r.n[0].id) : x.t, i += r.len - 1
+      else if (x.t === ":" && ts[i + 1]?.t === ":") {
+        i = nx(ts, i + 1)
+        if (ts[i + 1]?.t === "(") i = ts[i + 1].c
+        while (ts[i + 1]?.t === "[" || ts[i + 1]?.t === "]") i++
+      } else if (x.k === "w" && p && x.w === "over") {
+        const w = words(p + 1, ts[p].c).replace(/^partition by\b/, "each")
+        o += w ? " over " + w : "", i = ts[p].c
+      } else if (x.k === "w" && p && (PH[x.w] || PH[x.w + "()"] ||
+        /^(format|printf|coalesce|ifnull)$/.test(x.w))) {
+        const c = ts[p].c, as = split(ts, p + 1, c, p)
+          .map(u => words(...u)).filter(a => a && a !== "*")
+        const t = x.w === "format" || x.w === "printf"
+          ? `${as[0]} filled with ${as.slice(1).join(", ")}`
+          : x.w === "coalesce" || x.w === "ifnull" ? as.join(", else ")
+          : fill(PH[as.length ? x.w : x.w + "()"] ?? PH[x.w], as)
+        o += / else /.test(t) && (nx(ts, a - 1) < i || pv(ts, b) > c)
+          ? ` (${t}) ` : ` ${t} `
+        i = c
+        const f = nx(ts, i)
+        if (ts[f]?.w === "filter" && ts[nx(ts, f)]?.t === "(") {
+          const g = nx(ts, f), w = ts[nx(ts, g)].w === "where" ? nx(ts, g) : g
+          o += " among the rows where " + words(w + 1, ts[g].c), i = ts[g].c
+        }
+      } else if (x.t === "(" && holds(ts, i)) o += ` ${sub(i)} `, i = x.c
+      else o += x.t
+    }
+    return o.replace(/\s+/g, " ").replace(/([([]) /g, "$1")
+      .replace(/ ([)\],])/g, "$1")
+      .replace(/<>|!=/g, "≠").replace(/>=/g, "≥").replace(/<=/g, "≤")
+      .replace(/\border by\b/g, "in order of").replace(/\bdesc\b/g,
+        "descending").replace(/\basc\b/g, "ascending").trim()
+  }
+  // a cte, or any query inside another, comes first, as a step of its own
+  // named by its alias (else a letter), so that a plan reads in the order
+  // its rows are made; "(from t)" is t, with no step
+  const cx = {pre: [], n: 0, names: new Set}
+  const plan = (g, d, out) => {
+    const l = level(ts, g), was = sub
+    const S = (t, i, x = {}) => out.push({d, t, i, ...x})
+    sub = (j, name) => {
+      const f = nx(ts, j), t = nx(ts, f)
+      if (ts[f].w === "from" && ts[t].k === "w" && nx(ts, t) === ts[j].c)
+        return NAME(ts[t].t)
+      let a = nx(ts, ts[j].c)
+      if (ts[a]?.w === "as") a = nx(ts, a)
+      name ??= ts[a]?.k === "w" && !KW.test(ts[a].w) ? ts[a].t : null
+      const st = plan(j, 1, [])
+      name ??= String.fromCharCode(65 + cx.n++)
+      cx.names.add(name.toLowerCase())
+      cx.pre.push({d: 0, t: `Make table ${NAME(name)}:`,
+        i: level(ts, j).cl[0]}, ...st)
+      return NAME(name)
+    }
+    const qg = (a, b) => {
+      const j = nx(ts, a - 1)
+      return j < b && ts[j].t === "(" && holds(ts, j) ? j : -1
+    }
+    if (l.W >= 0) {
+      const a = nx(ts, l.W), s0 = ts[a].w === "recursive" ? nx(ts, a) : a
+      for (const [u, v] of split(ts, s0, l.m, g)) {
+        let j = u
+        while (j < v && !(ts[j].t === "(" && holds(ts, j))) j++
+        if (j < v) sub(j, ts[nx(ts, u - 1)].t)
+      }
+    }
+    const cl = l.cl.filter(j => j >= l.m), sets = cl.filter(j =>
+      SET.has(ts[j].w)), many = sets.length > 0
+    ;[l.m - 1, ...sets].forEach((s, k) => {
+      const e = sets[k] ?? l.b, sc = cl.filter(j => j > s && j < e)
+      if (!sc.length) return
+      if (many) {
+        const w = ts[s]?.w, all = ts[nx(ts, s)]?.w === "all"
+        S(k ? `${SETS[w]}${w === "union" && !all ? ", less duplicates" : ""}:`
+          : "Take the rows of:", k ? s : sc[0]), d++
+      }
+      const at = w => sc.filter(j => ts[j].w === w)
+      const body = j => {
+        const n = sc.find(x => x > j) ?? e
+        let a = nx(ts, j), b = n
+        if (ts[a]?.w === "by") a = nx(ts, a)
+        if (ts[n]?.w === "join")
+          while (MOD.has(ts[pv(ts, b)]?.w)) b = pv(ts, b)
+        return [a, b]
+      }
+      // a file read (read_csv and the like, st_read, or a path alone) is
+      // its kind and where it is
+      const file = (a, b) => {
+        const j = nx(ts, a - 1), p = nx(ts, j), m = ts[p]?.t === "(" &&
+          ts[j].w?.match(/^read_(csv|parquet|text|json|ndjson)|^st_read$/)
+        if (!m && (ts[j].k !== "s" || p < b)) return
+        const [u, v] = m ? split(ts, p + 1, ts[p].c, p)[0] : [j, b]
+        const l = nx(ts, u - 1), at = (ts[l].t === "[" ? split(ts, l + 1,
+          ts[l].c, l) : [[u, v]]).map(([x, y]) => ts.slice(x, y).filter(t =>
+          t.k === "s").map(t => t.t.slice(1, -1).replaceAll("''", "'"))
+          .join(""))
+        return at.every(Boolean) && `the ${m ? FILE[m[1]] : "file"}${
+          at.length > 1 ? "s" : ""} at ${at.map(AT).join(", ")}`
+      }
+      // a table written by hand is its number of rows and its columns: the
+      // rows are in the result
+      const src = ([a, b]) => {
+        const j = nx(ts, a - 1), r = ref(ts, j)
+        const v = ts[j].t === "(" && nx(ts, j)
+        if (!v || ts[v].w !== "values") return r?.n.length === 1
+          ? MODEL(r.n[0].id) : file(a, b) || words(a, b).replace(/^\w+/, m =>
+            cx.names.has(m.toLowerCase()) ? NAME(m) : m)
+        const n = split(ts, v + 1, ts[j].c, j).length
+        let e = nx(ts, ts[j].c)
+        e = nx(ts, ts[e]?.w === "as" ? nx(ts, e) : e)
+        return `a table written by hand, of ${n} row${n > 1 ? "s" : ""}` +
+          (ts[e]?.t === "(" ? ": " + words(e + 1, ts[e].c) : "")
+      }
+      // a table after a comma: each of its rows with each row so far, or,
+      // for an unnest, a row for each item of a list
+      const pair = ([u, v]) => {
+        if (ts[nx(ts, u - 1)].w === "lateral") u = nx(ts, u - 1) + 1
+        const j = nx(ts, u - 1), p = nx(ts, j), q = qg(u, v)
+        if (ts[j].w !== "unnest" || ts[p]?.t !== "(")
+          return "Pair each row with every row of " + (q < 0 ? src([u, v])
+            : sub(q))
+        const c = nx(ts, nx(ts, ts[p].c))
+        return "Make a row for each of " + words(p + 1, ts[p].c) +
+          (ts[c]?.t === "(" && c < v ? ", as " + words(c + 1, ts[c].c) : "")
+      }
+      for (const f of at("from")) {
+        const [a, b] = body(f)
+        split(ts, a, b, g).forEach(([u, v], k) => {
+          if (k) return S(pair([u, v]), f)
+          const j = qg(u, v), t = j < 0 ? src([u, v]) : sub(j)
+          S((/^the (\S+ )?files? at /.test(t) ? "Read " : "Start from ") + t, f)
+        })
+      }
+      for (const j of at("join")) {
+        let [a, b] = body(j), m = j, kind = []
+        const [, ...rest] = split(ts, a, b, g)
+        if (rest.length) b = rest[0][0] - 1
+        while (MOD.has(ts[pv(ts, m)]?.w)) m = pv(ts, m), kind.unshift(ts[m].w)
+        let on = a
+        while (on < b && !(ts[on].o === g && /^(on|using)$/.test(ts[on].w)))
+          on++
+        const k = kind.find(x => x in JOIN && x) ?? "", q = qg(a, on)
+        const c = on >= b ? "" : ts[on].w === "using" ? "it has the same " +
+          words(nx(ts, on) + 1, ts[nx(ts, on)].c ?? b) : words(on + 1, b)
+        S(fill(JOIN[k], [q < 0 ? src([a, on]) : sub(q), c])
+          .replace(/, where $/, ""), j)
+        for (const u of rest) S(pair(u), j)
+      }
+      for (const j of at("where"))
+        S("Keep the rows where " + words(...body(j)), j)
+      for (const j of at("group")) {
+        const [a, b] = body(j)
+        S(ts[a].w === "all" ? "Group the rows by each column that is not " +
+          "a total" : "Group the rows by " + words(a, b), j)
+      }
+      for (const j of at("having"))
+        S("Keep the groups where " + words(...body(j)), j)
+      // every column (of a table), but some, or with some made anew
+      const star = (u, v) => {
+        let i = nx(ts, u - 1), t = "every column"
+        if (ts[i + 1]?.t === "." && ts[i + 2]?.t === "*")
+          t += " of " + ts[i].t, i += 2
+        if (ts[i].t !== "*") return
+        for (i = nx(ts, i); i < v; i = nx(ts, ts[i].c)) {
+          const w = ts[i].w, p = nx(ts, i)
+          if (ts[p]?.t !== "(") return
+          const as = split(ts, p + 1, ts[p].c, p).map(([a, b]) => {
+            const [e, al] = cut(ts, a, b)
+            return al && w === "replace" ? `${al}: ${words(a, e)}`
+              : words(a, b)
+          }).join(", ")
+          t += w === "exclude" ? ` but ${as}` : `, with ${as}`, i = p
+        }
+        return t
+      }
+      for (const j of at("select")) {
+        let [a, b] = body(j), t = "Give"
+        if (ts[a].w === "distinct")
+          a = nx(ts, a), t = "Without duplicates, give"
+        const top = i => {
+          for (let o = ts[i].o; o !== g; o = ts[o].o) if (holds(ts, o)) return
+          return 1
+        }
+        const agg = !at("group").length && ts.slice(a, b).some((x, i) =>
+          AGG.test(x.w) && ts[a + i + 1]?.t === "(" && top(a + i))
+        const cols = split(ts, a, b, g).map(([u, v]) => {
+          const [e, al] = cut(ts, u, v), ex = words(u, e)
+          return al && al !== ex ? `${al}: ${ex}` : star(u, v) ?? ex
+        })
+        S(`${at("from").length ? agg ? "Over all the rows, give"
+          : t : "Make one row of"}:`, j, {cols})
+      }
+      for (const j of at("qualify"))
+        S("Keep the rows where " + words(...body(j)), j)
+      for (const j of at("order")) S("Sort by " + words(...body(j)), j)
+      for (const j of at("limit"))
+        S(`Keep the first ${words(...body(j))} rows`, j)
+      if (many) d--
+    })
+    sub = was
+    return out
+  }
+  const out = plan(-1, 0, []), l = level(ts, -1)
+  return cx.pre.length ? [...cx.pre, {d: 0, t: "Then:",
+    i: l.cl.find(j => j >= l.m)}, ...out.map(x => ({...x, d: x.d + 1}))] : out
+}
+
+// lineage: the tables that none of the others read in the last column,
+// those that read none of the others in the first, and the rest between by
+// their longest path from the first, so that every line runs rightward.
+// each column is by group, a group's tables together with a gap between,
+// and within a group by the mean place of the tables a table reads, then
+// of those that read it, back and forth, to cross fewer lines. a node has
+// an id, the set of nodes it reads, a group and its element's attributes
+const W = 170, G = 56, R = 24, NS = "http://www.w3.org/2000/svg"
+const dag = (ns, me) => {
+  const set = new Set(ns), d = new Map, y = new Map, cols = []
+  const ins = n => [...n.reads].filter(x => set.has(x) && x !== n)
+  const outs = n => ns.filter(x => ins(x).includes(n))
+  const dep = n => d.get(n) ?? (d.set(n, 0),
+    d.set(n, Math.max(-1, ...ins(n).map(dep)) + 1).get(n))
+  ns.forEach(dep)
+  const end = Math.max(1, ...ns.filter(n => outs(n).length).map(n =>
+    d.get(n) + 1))
+  ns.forEach(n => !outs(n).length && d.set(n, end))
+  ns.forEach(n => (cols[d.get(n)] ??= []).push(n))
+  cols.forEach(c => c.sort((a, b) => a.id.localeCompare(b.id))
+    .forEach((n, j) => y.set(n, j)))
+  const mean = (n, f) => f(n).length ? f(n).reduce((a, x) => a + y.get(x), 0)
+    / f(n).length : y.get(n)
+  const place = c => {
+    let g = 0
+    c.forEach((n, j) => y.set(n, j + (g += j && n.group !== c[j - 1].group
+      ? .5 : 0)))
+  }
+  for (let k = 0; k < 8; k++) for (const c of k % 2 ? [...cols].reverse()
+    : cols) c && place(c.sort((a, b) => a.group.localeCompare(b.group) ||
+      mean(a, k % 2 ? outs : ins) - mean(b, k % 2 ? outs : ins)))
+  const svg = document.createElementNS(NS, "svg"), box = document
+    .createElement("div"), at = n => [d.get(n) * (W + G), y.get(n) * R + R / 2]
+  svg.setAttribute("width", cols.length * (W + G))
+  svg.setAttribute("height", (Math.max(...y.values()) + 1) * R)
+  box.className = "dag", box.append(svg)
+  const light = id => box.querySelectorAll("path").forEach(p =>
+    p.classList.toggle("on", p.dataset.e.split(" ").includes(id)))
+  for (const n of ns) {
+    const [x, t] = at(n), a = Object.assign(document.createElement("a"), {
+      href: "#" + n.id, title: n.id, textContent: n.id, ...n.attrs,
+      onmouseenter: () => light(n.id), onmouseleave: () => light()})
+    a.style.cssText += `;left:${x}px;top:${t - R / 2 + 2}px;width:${W}px`
+    a.classList.toggle("on", n === me)
+    box.append(a)
+    for (const r of ins(n)) {
+      const [x1, y1] = at(r), x0 = x1 + W, m = (x0 + x) / 2
+      const p = document.createElementNS(NS, "path")
+      p.setAttribute("d", `M${x0} ${y1}C${m} ${y1} ${m} ${t} ${x} ${t}`)
+      p.dataset.e = r.id + " " + n.id
+      svg.append(p)
+    }
+  }
+  return box
+}
+
+// rows: a query's first N, as text, and N more each time the table is
+// scrolled to its foot; the count only when asked for. a float is to six
+// figures, or to a whole number if that is longer, with all of them on
+// hover. an error of a kind in WHY has its likely cause before it.
+// grid(st, out) gives run(tries): the first of them that runs
+
+const N = 200, WHY = [[/Referenced (table|column)/, "This part cannot run " +
+  "alone if it uses columns of the query around it."],
+  [/Table with name|Failed to open|No files found/, "A table or file that " +
+  "this reads is not here: not built, or named by a macro or a variable."],
+  [/NetworkError|GDAL|HTTP|Extension/, "The browser could not read a source " +
+  "on another site, or lacks an extension."],
+  [/Out of Memory|out of bounds|null function|unreachable/, "This needs " +
+  "more memory than the browser gives DuckDB. Reload the page."]]
+const NUM = /^(U?(TINY|SMALL|BIG|HUGE)?INT|INTEGER|FLOAT|DOUBLE|DECIMAL)/
+const FLT = /^(FLOAT|DOUBLE|DECIMAL)/
+// an element: its properties, its dataset, and its children, less the empty
+const h = (tag, {dataset, ...a} = {}, ...k) => {
+  const e = Object.assign(document.createElement(tag), a)
+  Object.assign(e.dataset, dataset)
+  return e.append(...k.flat().filter(x => x != null && x !== false)), e
+}
+const cell = v => v == null || typeof v !== "object" ? v
+  : v.byteLength != null ? `${v.byteLength} bytes`
+  : JSON.stringify(v.toJSON?.() ?? v, (_, x) =>
+    typeof x === "bigint" ? String(x) : x)
+const sub = q => `(\n${q.replace(/;\s*$/, "")}\n)`
+const page = (q, o) => query(
+  `select columns(*)::varchar from ${sub(q)} limit ${N + 1} offset ${o}`)
+  .catch(() => query(`from ${sub(q)} limit ${N + 1} offset ${o}`))
+
+const grid = (st, out) => {
+  let runs = 0, more
+  const say = (t, err) => (st.className = err ? "err" : "", st.textContent = t)
+  out.onscroll = () => more &&
+    out.scrollTop + out.clientHeight > out.scrollHeight - 400 && more()
+  const run = async qs => {
+    const k = ++runs, t0 = performance.now()
+    qs = [qs].flat(), more = null, say("Running")
+    try {
+      let q, t
+      for (const [i, x] of qs.entries()) try {
+        t = await page(x, 0), q = x
+        break
+      } catch (e) { if (i === qs.length - 1) throw e }
+      const ty = await sql(`describe select * from ${sub(q)}`)
+      if (k !== runs) return
+      const body = h("tbody"), tell = (n = body.rows.length) => st
+        .replaceChildren(`${n.toLocaleString()} row${n === 1 ? "" : "s"} in ${
+        Math.round(performance.now() - t0)} ms${more ? ", more below" : ""} `,
+        ...more || n > N ? [h("button", {onclick: async e => {
+          e.target.textContent = "Counting"
+          const [{n}] = await sql(`select count(*)::int n from ${sub(q)}`)
+          k === runs && e.target.replaceWith(`of ${n.toLocaleString()}`)
+        }}, "Count")] : [])
+      const add = t => {
+        const cols = t.schema.fields.map((_, j) => t.getChildAt(j))
+        body.append(...Array.from({length: Math.min(t.numRows, N)}, (_, i) =>
+          h("tr", {}, ...cols.map((col, j) => {
+            const raw = cell(col.get(i)), f = FLT.test(ty[j].column_type)
+            const v = f && isFinite(raw) ? String(Math.abs(raw) < 1e5
+              ? +(+raw).toPrecision(6) : Math.round(raw)) : raw
+            return h("td", {className: v == null ? "null"
+              : NUM.test(ty[j].column_type) ? "r" : "",
+              title: v === raw ? "" : raw}, v ?? "null")
+          }))))
+        more = t.numRows > N && (async () => {
+          more = null, st.firstChild.textContent = "Loading more "
+          const u = await page(q, body.rows.length)
+          k === runs && (add(u), tell())
+        })
+      }
+      add(t)
+      out.replaceChildren(h("table", {}, h("thead", {}, h("tr", {},
+        ...ty.map(r => h("th", {}, r.column_name,
+          h("small", {}, r.column_type))))), body))
+      out.scrollTop = 0, tell()
+    } catch (e) {
+      if (k === runs) out.replaceChildren(), say([WHY.find(([r]) =>
+        r.test(e.message))?.[1], e.message].filter(Boolean).join("\n\n"), 1)
+    }
+  }
+  // no rows, and why
+  run.say = (t, err) => (runs++, more = null, out.replaceChildren(),
+    say(t, err))
+  return run
+}
 
 const $ = q => document.querySelector(q)
 const narrow = matchMedia("(max-width: 860px)")
@@ -68,18 +639,12 @@ const up = (m, s = new Set) =>
 const down = (m, s = new Set) => (nodes.forEach(x => x.reads.has(m) &&
   !s.has(x) && (s.add(x), down(x, s))), s)
 
-// a project's own module (its inspect.js), if it has one, may give:
-// label(group), first(group) to lead the list, badge(m) as [text, title],
-// find(hash) for a model's id, head(m) for more of its header, and
-// tries(m) for the queries to show in place of its sql
-const ext = cfg.ext ? await (await import("./project.js"))
-  .default({cfg, by, sql, h}) : {}
 // the list: the nodes that INSPECT_HIDE does not name, by schema. the
 // schemas are in the graph's order, left to right: by the mean number of
 // tables before theirs, the schema with more tables first when that is the
 // same, and the tests last. a schema's colour is its place in that order
-const HIDE = new RegExp(cfg.hide || "^$"), label = g => ext.label?.(g) ??
-  (g === "test" ? "Tests" : g)
+const HIDE = new RegExp(cfg.hide || "^$")
+const label = g => g === "test" ? "Tests" : g
 const shown = nodes.filter(m => !HIDE.test(m.id))
 const inG = g => shown.filter(m => m.group === g), far = g => g === "test"
   ? Infinity : inG(g).reduce((a, m) => a + up(m).size, 0) / inG(g).length
@@ -90,13 +655,11 @@ const HUES = ["#e6c07b", "#61afef", "#98c379", "#c678dd", "#56b6c2",
 for (const m of nodes) m.attrs = {className: m.built || m.test ? "" : "off",
   style: `--s:${m.test ? "#808080"
     : HUES[groups.indexOf(m.group) % HUES.length]}`}
-const link = (id, a, [b, title = ""] = []) => h("a", {href: "#" +
-  encodeURIComponent(id), title, dataset: {id}, className: by[id]
-  ?.attrs.className ?? ""}, a, b != null && h("span", {}, String(b)))
-nav.append(link("", "All tables"), ...[...groups].sort((a, b) =>
-  !!ext.first?.(b) - !!ext.first?.(a)).flatMap(g => [h("h2", {}, label(g)),
-  ...inG(g).map(m => link(m.id, m.id.replace(/^.*[./]/, ""),
-    ext.badge?.(m)))]))
+const link = (id, a) => h("a", {href: "#" + encodeURIComponent(id),
+  dataset: {id}, className: by[id]?.attrs.className ?? ""}, a)
+nav.append(link("", "All tables"), ...groups.flatMap(g => [
+  h("h2", {}, label(g)), ...inG(g).map(m =>
+    link(m.id, m.id.replace(/^.*[./]/, "")))]))
 $("nav input").oninput = e => nav.querySelectorAll("a").forEach(a =>
   a.hidden = !(a.textContent + " " + a.title).toLowerCase()
     .includes(e.target.value.toLowerCase()))
@@ -148,8 +711,8 @@ const mark = (e, q) => {
   narrow.matches && out.scrollIntoView()
   run(q)
 }
-const show = (m, s) => {
-  const ts = s ? pretty(s) : m.fmt ??= pretty(m.body), pre = h("pre")
+const show = m => {
+  const ts = m.fmt ??= pretty(m.body), pre = h("pre")
   const r = ref(m), to = n => h("a", {href: "#" + n.id, title: n.desc})
   for (let i = 0; i < ts.length; i++) {
     const x = ts[i], f = r(ts, i)
@@ -181,15 +744,12 @@ const show = (m, s) => {
         x.cols.map(c => h("li", {}, txt(c))))))), pre)
 }
 
-// a node, by the hash: its description, its file and what it reads from
-// outside the project, its lineage, the project's own part, then its sql
-// and its table's rows (a test's failing rows); no hash, the lineage of
-// every table and test. its place in the list comes into view, or on a
-// phone the top of the page
+// a node, by the hash: its description, its file and the variables it
+// reads, its lineage, then its sql and its table's rows (a test's failing
+// rows); no hash, the lineage of every table and test. its place in the
+// list comes into view, or on a phone the top of the page
 const go = () => {
-  const key = decodeURIComponent(location.hash.slice(1))
-  const id = ext.find?.(key) ?? key, m = by[id]
-  if (id !== key) history.replaceState(null, "", "#" + id)
+  const id = decodeURIComponent(location.hash.slice(1)), m = by[id]
   const on = nav.querySelector(`[data-id="${CSS.escape(id)}"]`)
   nav.querySelector(".on")?.classList.remove("on"), on?.classList.add("on")
   narrow.matches ? scrollTo(0, 0) : on?.scrollIntoView({block: "nearest"})
@@ -201,16 +761,12 @@ const go = () => {
   head.replaceChildren(h("h1", {}, id))
   if (!m) return $("#sql").replaceChildren(), run.say("Not in this project")
   head.append(...h("div", {}, m.desc && h("p", {}, m.desc), m.note &&
-    h("p", {className: "chips"}, m.note), h("p", {className: "chips"},
-    [m.file, m.by && `a file for each ${m.by}`, ...m.sources,
-      ...m.env.map(k => "$" + k)].filter(Boolean).join(" · ")),
+    h("p", {className: "note"}, m.note), h("p", {className: "file"}, m.file,
+    ...m.env.map(k => h("span", {}, "$" + k))),
     dag([...up(m), m, ...down(m)].filter(x => x === m ||
-      !HIDE.test(x.id)), m), ext.head?.(m)).childNodes)
-  head.querySelector(`[data-key="${CSS.escape(key)}"]`)?.scrollIntoView()
-  const q = ext.tries?.(m)
-  show(m, q?.[0])
-  q ? run(q).then(i => i && show(m, q[i]))
-    : m.built ? run(`from ${m.view}`)
+      !HIDE.test(x.id)), m)).childNodes)
+  show(m)
+  m.built ? run(`from ${m.view}`)
     : !m.test ? run.say(`Not built: make ${m.target}`)
     : [...m.reads].every(x => x.built) ? run(m.body)
     : run.say("Not run: a table that it reads is not built")

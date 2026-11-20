@@ -15,7 +15,7 @@ by      = $($@.by)
 src     = $(if $(by),$(@:$(BUILD)/%=models/%@$(by).sql),$<)
 flags   = $(if $(findstring =,$(firstword $(MAKEFLAGS))),,$(firstword -$(MAKEFLAGS)))
 quiet   = $(findstring s,$(flags))
-page   := $(addprefix $(dir $(self))inspect/,index.html inspect.js db.js sql.js plan.js dag.js rows.js)
+page   := $(addprefix $(dir $(self))inspect/,index.html inspect.js)
 passed  = $(foreach k,$(sort $(foreach m,$(models),$($m.env))),$(if $(findstring $(origin $k),file command line override),$k))
 recheck = $(if $(filter-out FORCE,$?)$(findstring B,$(flags)),,$(run) "$$FRESH" 2>/dev/null ||)
 
@@ -52,9 +52,8 @@ shell: export VIEWS = $(views)
 shell: $(models)
 	@$(DUCKDB) $(macros:%=-cmd '.read %') -cmd "$$VIEWS"
 
-inspect: $(page) $(wildcard inspect.js)
-	@mkdir -p $(INSPECT) && cp $(page) $(INSPECT) && rm -f $(INSPECT)/project.js && \
-	  $(if $(wildcard inspect.js),cp inspect.js $(INSPECT)/project.js &&) \
+inspect: $(page)
+	@mkdir -p $(INSPECT) && cp $(page) $(INSPECT) && \
 	  $(db) -cmd '.output /dev/null' -c "$$PLAN" -cmd '.output' -c "$$PAGE" > $(INSPECT)/.ls && \
 	  rm -rf $(INSPECT)/files && while IFS= read -r f; do t="$(INSPECT)/files/$$f" && \
 	  mkdir -p "$$(dirname "$$t")" && { ln -f "$$f" "$$t" 2>/dev/null || cp "$$f" "$$t"; }; \
@@ -324,7 +323,6 @@ copy (
   select
     '$(notdir $(CURDIR))' as title,
     '$(INSPECT_HIDE)' as hide,
-    '$(wildcard inspect.js)' <> '' as ext,
     getvariable('files') as files,
     (
       select map_from_entries(coalesce(list((k, getenv(k))), []))

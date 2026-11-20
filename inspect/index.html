@@ -33,7 +33,7 @@ body {
 a { color: inherit; text-underline-offset: .2em; }
 nav {
   grid-area: nav; overflow: auto; padding: 16px;
-  border-right: 1px solid var(--line);
+  font: 13px/1.6 var(--mono); border-right: 1px solid var(--line);
 }
 nav input {
   width: 100%; padding: 6px 8px; margin-bottom: 12px; font: inherit;
@@ -44,10 +44,9 @@ nav h2 {
   text-transform: uppercase; letter-spacing: .06em; color: var(--mute);
 }
 nav a {
-  display: flex; gap: 8px; justify-content: space-between;
-  padding: 1px 0; text-decoration: none; white-space: nowrap;
+  display: block; padding: 1px 0; text-decoration: none; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
 }
-nav a span { overflow: hidden; text-overflow: ellipsis; color: var(--mute); }
 nav a.off, .dag a.off { color: var(--mute); }
 nav a:hover, nav a.on { color: var(--hi); }
 main {
@@ -61,9 +60,11 @@ header {
   overflow: auto;
   border-bottom: 1px solid var(--line);
 }
-h1 { margin: 0 0 4px; font-size: 20px; font-weight: 500; }
+h1 { margin: 0 0 4px; font: 500 18px var(--mono); }
 header p { margin: 4px 0; max-width: 80ch; }
-.chips { color: var(--mute); }
+.note, .file { color: var(--mute); }
+.file { font: 12.5px var(--mono); }
+.file span { margin-left: 2ch; }
 pre {
   margin: 0; font: 12.5px/1.5 var(--mono); white-space: pre-wrap;
   overflow-wrap: anywhere;

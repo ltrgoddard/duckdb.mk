@@ -29,10 +29,9 @@ is "the command line's values" "$($MAKE -s DUCKDB="$DUCKDB" inspect SECRET=open 
   "{'REGION': south, 'SECRET': open}"
 is "macros" "$(j 'macros[1].file')" 'macros/m.sql'
 is "the page" "$(ls build/inspect | xargs)" \
-  'dag.js db.js files index.html inspect.js inspect.json plan.js rows.js sql.js'
+  'files index.html inspect.js inspect.json'
 
 $MAKE -s DUCKDB="$DUCKDB" build/s/a.parquet build/s/deep/Part > /dev/null
-echo "export default () => ({})" > inspect.js
 t "the built tables are linked" "" -s inspect INSPECT_HIDE='^top$$'
 is "files" "$(cd build/inspect/files && find . -type f | sort | xargs)" \
   './build/s/a.parquet ./build/s/deep/Part/k=a/data.parquet ./build/s/deep/Part/k=b/data.parquet ./data/x.csv'
@@ -42,13 +41,12 @@ is "a hidden model's files are not linked" "$($MAKE -s DUCKDB="$DUCKDB" inspect 
   "[build/s/a.parquet, 'build/s/deep/Part/k=a/data.parquet', 'build/s/deep/Part/k=b/data.parquet']"
 $MAKE -s DUCKDB="$DUCKDB" inspect INSPECT_HIDE='^top$$'
 is "a link, not a copy" "$(find build/s/a.parquet -links 2 | wc -l | xargs)" 1
-is "the project's module and what to hide" "$(j "ext || ' ' || hide") $(cat build/inspect/project.js)" \
-  'true ^top$ export default () => ({})'
-rm -r build/s/deep inspect.js
+is "what to hide" "$(j hide)" '^top$'
+rm -r build/s/deep
 t "a table that has gone is unlinked" "" -s inspect
-is "files left" "$(j files) $(ls build/inspect/files/build/s | xargs) $(ls build/inspect | grep -c project)" \
-  '[build/s/a.parquet, data/x.csv] a.parquet 0'
+is "files left" "$(j files) $(ls build/inspect/files/build/s | xargs)" \
+  '[build/s/a.parquet, data/x.csv] a.parquet'
 is "it does not read itself" "$(echo "from 'build/**/*.parquet'" > models/all.sql; \
   $MAKE -s DUCKDB="$DUCKDB" inspect 2>&1; j files)" '[build/s/a.parquet, data/x.csv]'
 is "another directory" "$($MAKE -s DUCKDB="$DUCKDB" inspect INSPECT=site/i; ls site/i | xargs)" \
-  'dag.js db.js files index.html inspect.js inspect.json plan.js rows.js sql.js'
+  'files index.html inspect.js inspect.json'

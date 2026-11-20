@@ -212,7 +212,7 @@ A local copy also works: `include duckdb.mk`.
 `make serve` shows the project as a page: its models and tests, their
 dependencies as the plan has them, and each query as steps that run in the
 browser. `make inspect` writes the page and does not serve it. Make fetches
-the page's seven files, at the version in `DUCKDB_MK`, the first time. With a
+the page's two files, at the version in `DUCKDB_MK`, the first time. With a
 local copy of `duckdb.mk`, put the repository's `inspect/` directory beside
 it.
 
@@ -250,22 +250,6 @@ all: inspect
   [sql-formatter](https://github.com/sql-formatter-org/sql-formatter) from
   jsDelivr at fixed versions, so the first load needs a network connection.
   DuckDB-Wasm has about 4 GB of memory and one thread.
-
-A project can add to the page with a file named `inspect.js` at its root: an
-ES module whose default export is a function. The page calls it once with
-`{cfg, by, sql, h}`: the contents of `inspect.json`, the nodes by id, a
-function that runs a query and returns its rows, and an element builder. It
-can import the page's modules, such as `./sql.js`. It returns an object with
-any of these functions:
-
-| Function        | Returns                                                |
-| --------------- | ------------------------------------------------------ |
-| `label(schema)` | A heading for a schema in the list                     |
-| `first(schema)` | True to put a schema at the top of the list            |
-| `badge(node)`   | `[text, title]` to show beside a node in the list      |
-| `find(hash)`    | The id of the node that a URL fragment refers to       |
-| `head(node)`    | Elements to add to a node's header                     |
-| `tries(node)`   | Queries to show and run in place of the node's SQL; the first that runs is used |
 
 ## Steps that DuckDB cannot do
 
