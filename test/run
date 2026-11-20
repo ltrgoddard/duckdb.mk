@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# end-to-end tests for duckdb.mk: ./test.sh [suite ...] runs test/<suite>.sh, or every suite,
+# end-to-end tests for duckdb.mk: test/run [suite ...] runs test/<suite>.sh, or every suite,
 # in parallel, each in a fresh project; set DUCKDB and MAKE to test other executables
-cd "$(dirname "$0")" && here=$PWD tmp=$(mktemp -d) start=$SECONDS pids=()
+cd "$(dirname "$0")/.." && here=$PWD tmp=$(mktemp -d) start=$SECONDS pids=()
 export DUCKDB=${DUCKDB:-duckdb} MAKE=${MAKE:-make} LC_ALL=C
 mkdir "$tmp/www"; python3 test/server.py "$tmp/www" > "$tmp/requests" 2>&1 & server=$!
 trap 'kill $server; wait $server 2>/dev/null; rm -rf "$tmp"' EXIT

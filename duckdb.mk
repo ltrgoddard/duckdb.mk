@@ -1,7 +1,6 @@
 DUCKDB ?= duckdb
 BUILD  ?= build
 INSPECT ?= $(BUILD)/inspect
-DUCKDB_MK ?= main
 , := ,
 
 self   := $(lastword $(MAKEFILE_LIST))
@@ -63,7 +62,8 @@ serve: inspect
 	python3 -m http.server -d $(INSPECT) 8000
 
 $(page):
-	curl -sSfL --create-dirs -o $@ https://raw.githubusercontent.com/ltrgoddard/duckdb.mk/$(DUCKDB_MK)/inspect/$(@F)
+	$(if $(DUCKDB_MK),curl -sSfL --create-dirs -o $@ https://raw.githubusercontent.com/ltrgoddard/duckdb.mk/$(DUCKDB_MK)/inspect/$(@F),\
+	  $(error put the inspect directory of duckdb.mk beside $(self)))
 
 define PLAN
 create table src as
@@ -117,6 +117,12 @@ select target, loc, lower(v->>'schema_name') as schema, lower(v->>'table_name') 
 from node
 where v->>'type' = 'BASE_TABLE';
 
+select error(s.file || ': no model ' || r.schema || '.' || r.name)
+from ref as r
+join src as s using (target)
+where r.schema in (select schema from src where kind = 'models')
+  and (r.schema, r.name) not in (select (schema, name) from src where kind = 'models');
+
 create table str as
 select target, v->>'table_name' as s
 from node
@@ -125,7 +131,10 @@ union
 select target, unnest(if(
   a->>'function_name' = 'list_value',
   json_extract_string(a, '$$.children[*].value.value') || json_extract_string(a, '$$.arguments[*].expression.literal.text'),
-  [coalesce(a->>'$$.value.value', a->>'$$.literal.text')]
+  [coalesce(a->>'$$.value.value', a->>'$$.literal.text', if(
+    a->>'function_name' = '||' and coalesce(a->>'$$.children[0].function_name', a->>'$$.arguments[0].expression.function_name') = 'getenv',
+    '$$(' || coalesce(a->>'$$.children[0].children[0].value.value', a->>'$$.arguments[0].expression.arguments[0].expression.literal.text')
+      || ')' || coalesce(a->>'$$.children[1].value.value', a->>'$$.arguments[1].expression.literal.text'), null))]
 ))
 from (select target, unnest(json_extract(v, '$$.function.children[*]') || json_extract(v, '$$.function.arguments[*].expression')) as a from node where v->>'type' = 'TABLE_FUNCTION');
 
@@ -186,7 +195,7 @@ create table vol as
 from (
   select target, 'sources' as k, s as x
   from str
-  where regexp_matches(s, '^[a-z][a-z0-9+.-]*://')
+  where regexp_matches(s, '^[a-z][a-z0-9+.-]*://|^\$$\(')
   union
   select target, 'sources', s
   from pat
@@ -262,7 +271,7 @@ from (
   union all
   select target || '.by := ' || col from src where col <> ''
   union all
-  select target || '.' || k || ' += ' || replace(replace(replace(x, '''', ''''''), '$$', '$$$$'), '#', '\#')
+  select target || '.' || k || ' += ' || replace(replace(replace(x, '''', ''''''), '$$', if(x like '$$(%', '$$', '$$$$')), '#', '\#')
   from (select target, k, x from vol union all select t, 'files', x from found)
   union all
   select 'macros += ' || file from glob('macros/*.sql')

@@ -9,6 +9,8 @@ files; duckdb.mk parses them into a dependency graph using DuckDB's
 `json_serialize_sql` function and builds a corresponding directory of Parquet
 tables.
 
+![The inspector: a model's lineage, its query as steps in words, and its rows](docs/inspect.png)
+
 DuckDB and Make are both wonderful 'Swiss army knife' tools -- together, they
 make it extremely easy to build multi-stage data pipelines querying local and
 external sources, e.g. for research or analytical dashboards. duckdb.mk is a
@@ -16,7 +18,7 @@ formalisation of an *ad hoc* approach that I've developed over many years of
 working on data journalism and research projects at NGOs.
 
 See [`example/`](example/) for a duckdb.mk project that analyses methane
-emissions using public data and [REFERENCE.md](REFERENCE.md) for the full
+emissions using public data and [docs/REFERENCE.md](docs/REFERENCE.md) for the full
 interface.
 
 ## Compared with other tools
@@ -125,28 +127,28 @@ flowchart.
 dependency graph from the plan, and shows each model's SQL as steps in plain
 words. A click on a step or a clause runs the query up to that point in the
 browser, with [DuckDB-Wasm](https://github.com/duckdb/duckdb-wasm), against
-the tables as Make last built them. It builds nothing: a model without a
-table shows as not built. See [REFERENCE.md](REFERENCE.md#inspector).
+the tables as Make last built them. See
+[docs/REFERENCE.md](docs/REFERENCE.md#inspector).
 
 ## Agent skill
 
-[`skills/duckdb-mk/SKILL.md`](skills/duckdb-mk/SKILL.md) tells a coding agent
+[`docs/SKILL.md`](docs/SKILL.md) tells a coding agent
 how to build, test and hand over a duckdb.mk project. To install it for
 Claude Code in a project:
 
 ```sh
 curl -sSfL --create-dirs -o .claude/skills/duckdb-mk/SKILL.md \
-  https://raw.githubusercontent.com/ltrgoddard/duckdb.mk/main/skills/duckdb-mk/SKILL.md
+  https://raw.githubusercontent.com/ltrgoddard/duckdb.mk/main/docs/SKILL.md
 ```
 
 ## Development
 
-`./test.sh` runs the end-to-end tests in `test/` in parallel against real `make`
+`test/run` runs the end-to-end tests in `test/` in parallel against real `make`
 and `duckdb` executables (set `MAKE` and `DUCKDB` to try others). They cover
 rebuilds, dependency resolution, errors, partitioned models, the inspector's
 files, remote sources over HTTP and S3, a pipeline over millions of generated rows and a random
 300-model project checked against an independent model of its dependency
-graph. `./bench.sh [git ref ...]` times the working copy against earlier
+graph. `test/bench [git ref ...]` times the working copy against earlier
 versions.
 
 Contributions -- bug fixes, ergonomics, new features -- are encouraged. Please

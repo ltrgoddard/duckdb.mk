@@ -41,5 +41,7 @@ t "a table that has gone is unlinked" "" -s inspect
 is "files left" "$(ls build/inspect/files/build/s | xargs) [$(pl 'build/s/deep/Part.files +=')]" 'a.parquet []'
 is "it does not read itself" "$(echo "from 'build/**/*.parquet'" > models/all.sql; \
   $MAKE -s DUCKDB="$DUCKDB" inspect 2>&1; pl 'build/all.parquet.files +=')" 'build/s/a.parquet'
+is "a local copy fetches no page" "$(rm -r inspect; $MAKE -s DUCKDB="$DUCKDB" inspect 2>&1 | grep -c 'put the inspect directory')" 1
+cp -R "$here/inspect" .
 is "another directory" "$($MAKE -s DUCKDB="$DUCKDB" inspect INSPECT=site/i; ls site/i | xargs)" \
   'files index.html plan.mk'

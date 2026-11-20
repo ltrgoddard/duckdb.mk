@@ -115,13 +115,15 @@ on:
 | A glob in `$(BUILD)`, e.g. `'build/marts/*.parquet'` | Every model it matches; checked on every run |
 | `http://`, `s3://` and other URLs    | Checked on every run (see below)        |
 | `getenv('NAME')`                     | Checked on every run (see below)        |
+| `getenv('NAME') \|\| '/x.csv'`, a variable then a literal | The variable, and the file or glob that the two name, checked on every run |
 | Anything in `macros/`                | Every model and test                    |
 
 Strings count where DuckDB reads them as sources: as a table name
 (`from 'data/x.csv'`) or as an argument of a table function, alone or in
 a list (`read_csv(['a.csv', 'b.csv'])`). A URL built at run time, such as
 `'https://example.org/?key=' || getenv('KEY')`, is not checked, but the
-variable is.
+variable is. The one path built at run time that is checked is a variable
+followed by one literal.
 
 A path or a glob is a dependency if it has only letters, digits and
 `_ . / ~ - =`, and a path must also end in an extension. DuckDB reads a path
@@ -185,10 +187,9 @@ build/gem/%: export RAW_URI = s3://bucket/gem/2026-11-01
 ```
 
 The target-specific `export` sets the variable for each model in `build/gem/`.
-duckdb.mk checks its value on every run and rebuilds the models that read it
-when it changes. The path built at run time is not fingerprinted, only the
-variable: point the variable at a new run, and do not change the files of an
-old one.
+duckdb.mk checks its value on every run, and the size and modification time
+of the file that the variable and the literal name. It rebuilds the models
+that read them when either changes.
 
 ## Output
 
@@ -207,6 +208,8 @@ The plan stops with a message for:
 - A path with characters other than letters, digits, `_`, `-` and `/`, except
   for one `@<column>` suffix on a model
 - A duplicate model name
+- A name `schema.table` where the schema has models and none is `table`
+  (`models/x.sql: no model census.countys`)
 - A dependency cycle
 
 An error in a build or a test is DuckDB's own. Its `LINE` is the line of the
@@ -239,8 +242,8 @@ A local copy also works: `include duckdb.mk`.
 dependencies as the plan has them, and each query as steps that run in the
 browser. `make inspect` writes the page and does not serve it. Make fetches
 the page, one HTML file, at the version in `DUCKDB_MK`, the first time. With a
-local copy of `duckdb.mk`, put the repository's `inspect/` directory beside
-it.
+local copy of `duckdb.mk` and no `DUCKDB_MK`, put the repository's `inspect/`
+directory beside it: Make fetches nothing, and stops if it is not there.
 
 The page builds no model. Each run writes the plan again as `plan.mk` beside
 the page, so that its lines that name the files of a partitioned table, and

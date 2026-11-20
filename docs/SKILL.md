@@ -32,7 +32,8 @@ model and a test for every assumption.
 
 1. Find the version. The Makefile sets `DUCKDB_MK` to a tag or a branch. The
    full interface for that version is in its `REFERENCE.md`:
-   `https://raw.githubusercontent.com/ltrgoddard/duckdb.mk/<DUCKDB_MK>/REFERENCE.md`.
+   `https://raw.githubusercontent.com/ltrgoddard/duckdb.mk/<DUCKDB_MK>/docs/REFERENCE.md`
+   (at the top of the repository up to v0.2.0).
    Read it when this skill does not answer a question.
 2. Check the DuckDB version with `duckdb --version`. duckdb.mk needs 1.4 or
    later. DuckDB 2.0 rejects `x -> x + 1` lambdas by default; write
@@ -99,7 +100,8 @@ pivot generation on fuel in ('gas', 'coal') using sum(mwh) group by plant
 ```
 
 **Refer to other models by name.** Write `from census.counties`, or
-`from matches` for a model in `main`. duckdb.mk resolves the name to the
+`from matches` for a model in `main`. The plan stops at a name in a schema of
+models that is no model (`no model census.countys`). duckdb.mk resolves the name to the
 model's table and makes it a dependency. A CTE with the same name hides the
 model inside its scope, as in DuckDB.
 
@@ -119,7 +121,9 @@ reads a string as one: a table name (`from 'data/x.csv'`) or an argument of a
 table function (`read_csv('data/*.csv')`, `read_parquet(['a', 'b'])`). A path
 built at run time, such as `'data/' || year || '.csv'`, is not a dependency,
 is not checked for changes and is not shown in the inspector. When a path
-must change, put the changing part in an environment variable (see below).
+must change, put the changing part in an environment variable, first, with
+the rest after it as one literal: `read_csv(getenv('RAW') || '/x.csv')`.
+duckdb.mk then checks that file as well as the variable.
 
 **Keep models small and named for what they hold.** Give a table its own model
 when a reviewer would want to see its rows: a cleaned source, a join, an
@@ -254,7 +258,6 @@ To rebuild one table, `touch` its model's file and run `make`.
 | ------- | ----- | --- |
 | `Only SELECT statements can be serialized to json` | A model or test holds `CREATE`, `SET` or another statement, or a `PIVOT` with no `in` list | Move setup into `macros/`; keep one `SELECT` per file; list the pivot's values |
 | `Table with name x does not exist` for every model, at a line of a macro | A macro reads a model | Join the table in the model, or pass its name to a table macro |
-| A table is not rebuilt after its input file changed | The model builds the file's path from a variable, so only the variable is checked | Name the file literally, or add it in the Makefile: `build/x.parquet: data/x.csv` |
 | `expected one SELECT statement` | More than one statement in a file | Split it into models |
 | A table is not rebuilt after an edit | The edit fell in the same second as the build; Make 3.81 compares whole seconds | `touch` the model's file and run `make`; the inspector shows the table in italics |
 | A model runs before its input exists | The path is built at run time | Write the path as a literal, or use `getenv` |

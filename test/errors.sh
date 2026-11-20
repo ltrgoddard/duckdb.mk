@@ -11,6 +11,7 @@ try bad "-- only a comment" "no statement" "models/bad.sql: expected one SELECT 
 try bad "" "empty file" "models/bad.sql: expected one SELECT statement"
 try bad "create table x as select 1" "not a select" "models/bad.sql: Only SELECT statements"
 try bad "pivot ok on id" "pivot statement" "models/bad.sql: Only SELECT statements"
+try bad "from main.nope" "a name that is no model" "models/bad.sql: no model main.nope"
 try self "from self" "self reference" "dependency cycle: build/self.parquet"
 echo "from b" > models/a.sql && echo "from a" > models/b.sql
 t "cycle" "!dependency cycle: build/a.parquet build/b.parquet"
