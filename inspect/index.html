@@ -74,7 +74,11 @@ h1 { margin: 0 0 4px; font: 500 18px var(--mono); }
 header p { margin: 4px 0; max-width: 80ch; }
 .note, .file { color: var(--mute); }
 .file { font: 12.5px var(--mono); }
-.file span { margin-left: 2ch; }
+/* a variable that the query reads: its value, for the viewer to give */
+.file input {
+  margin-left: 2ch; padding: 0 4px; width: 18ch; font: inherit; color: var(--fg);
+  border: 0; background: #1a1a1a;
+}
 pre {
   margin: 0; font: 12.5px/1.5 var(--mono); white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -258,7 +262,7 @@ const registerFile = (path, url) => db.registerFileURL(path,
 // the top) and, for an opening bracket, the index of its close. a clause
 // keyword (clause: true) starts a part of a query
 const TOKEN = new RegExp(["(--[^\\n]*|/\\*[\\s\\S]*?\\*/)",
-  "([eE]'(?:[^'\\\\]|\\\\.|'')*'|'(?:[^']|'')*')", '("(?:[^"]|"")*")',
+  "([eE]'(?:[^'\\\\]|\\\\.|'')*'|'(?:[^']|'')*'|\\$\\$[\\s\\S]*?\\$\\$)", '("(?:[^"]|"")*")',
   "(\\d[\\w.]*)", "([A-Za-z_][\\w$]*)", "(\\s+)", "([\\s\\S])"].join("|"), "g")
 const KINDS = ["comment", "string", "quoted", "number", "word", "space",
   "punctuation"]
@@ -334,7 +338,7 @@ const columnName = (tokens, from, to) => {
   const last = previous(tokens, to), before = previous(tokens, last)
   const name = tokens[last], joiner = tokens[before]
   return before >= from && (name.kind === "word" || name.kind === "quoted") &&
-    !/^(end|null|true|false)$/.test(name.word) && (joiner.word === "as" ||
+    !/^(end|null|true|false)$/i.test(name.text) && (joiner.word === "as" ||
     joiner.kind !== "punctuation" || /[)\]'"]/.test(joiner.text)) &&
     joiner.text !== "." ? [joiner.word === "as" ? before : last, name.text]
     : [to, null]
@@ -350,7 +354,7 @@ const SPACED = setOf("in as and or not exists over filter using on values " +
   "from join select where when then else by all any some recursive union " +
   "except intersect lateral is with case like")
 const format = sql => {
-  sql = glueStrings(sql)
+  sql = glueStrings(sql.replace(/;\s*$/, ""))
   try {
     // the formatter takes a pivot's list for a select's
     if (tokenize(sql).some(token => token.clause && PIVOTS.has(token.word)))
@@ -441,19 +445,25 @@ const ctesAbove = (tokens, at, bracket, scope) => {
 }
 // the sql that gives the rows at a clause, with the ctes that it can read:
 // a list of tries, the first of which that runs is shown. a with, a union
-// or a pivot is its whole query
+// or a pivot is its whole query, and an order or a limit after a union is
+// the union's, to the next clause
 const queryAt = (tokens, at) => {
   const bracket = tokens[at].parent, scope = scopeOf(tokens, bracket)
   const word = tokens[at].word, whole = word === "with" ||
     SET_OPERATIONS.has(word) ||
     PIVOTS.has(tokens[scope.clauses.find(n => n >= scope.mainAt)]?.word)
-  const tries = whole ? [textOf(tokens, scope.mainAt, scope.end)]
+  const tail = isTail(tokens, scope, at)
+  const tries = whole || tail ? [textOf(tokens, scope.mainAt, whole ? scope.end
+    : scope.clauses.find(n => n > at) ?? scope.end)]
     : clauseTries(tokens, at, scope)
-  const {texts, recursive} = ctesAbove(tokens, whole ? scope.mainAt : at,
+  const {texts, recursive} = ctesAbove(tokens, whole || tail ? scope.mainAt : at,
     bracket, scope)
   return tries.map(sql => texts.length ? `with ${recursive ? "recursive " : ""
     }${texts.join(",\n")}\n${sql}` : sql)
 }
+// an order or a limit after a union, which is the whole union's
+const isTail = (tokens, scope, at) => /^(order|limit)$/.test(tokens[at].word) &&
+  scope.clauses.some(n => n < at && SET_OPERATIONS.has(tokens[n].word))
 // a clause's query: its part of a union (less its all, distinct or by name)
 // up to the next clause; for a from, a join or a where, each table so far
 // (select *, else its own select list, whose names a where may use)
@@ -464,7 +474,8 @@ const clauseTries = (tokens, at, scope) => {
     scope.mainAt - 1) + 1
   while (["all", "distinct", "by", "name"].includes(
     tokens[next(tokens, start - 1)].word)) start = next(tokens, start - 1) + 1
-  const end = clauses.find(n => n > at && isSet(n)) ?? scope.end
+  const end = clauses.find(n => n > at && (isSet(n) ||
+    isTail(tokens, scope, n))) ?? scope.end
   const own = clauses.filter(n => n >= start && n < end)
   const isTable = own.includes(at) && ["from", "join"].includes(word)
   let stop = own.find(n => n > at && (isTable || tokens[n].word !== "join"))
@@ -473,10 +484,10 @@ const clauseTries = (tokens, at, scope) => {
     while (JOIN_MODIFIERS.has(tokens[previous(tokens, stop)]?.word))
       stop = previous(tokens, stop)
   const isSelect = tokens[own[0]].word === "select"
+  const from = own.find(n => tokens[n].word === "from")
   return isSelect && word === "select" ? [textOf(tokens, start, end)]
-    : isSelect && ["from", "join", "where"].includes(word)
-    ? ["select * " + textOf(tokens, own.find(n => tokens[n].word === "from"),
-      stop), textOf(tokens, start, stop)]
+    : isSelect && from && ["from", "join", "where"].includes(word)
+    ? ["select * " + textOf(tokens, from, stop), textOf(tokens, start, stop)]
     : [textOf(tokens, start, stop)]
 }
 
@@ -546,7 +557,7 @@ const AGGREGATE = new RegExp(`^(${("count sum avg mean median min max " +
   "bool_or bool_and stddev").split(" ").join("|")})$`)
 const KEYWORD = new RegExp(`^(${[...CLAUSES, ...JOIN_MODIFIERS, ...setOf(
   "on using window as and or not is in like ilike between then else when " +
-  "end over filter")].join("|")})$`)
+  "end over filter offset")].join("|")})$`)
 // a json key: a.b, or nothing for the whole of it
 const JSON_KEY = new RegExp(` ?->>? ?(\x05s'(?:\\$\\.?)?([^'\x04]*)'\x04|` +
   `\x05n(\\d+)\x04|[\\w.]+)`, "g")
@@ -785,7 +796,8 @@ const readLike = (phrase, at) => {
   const parts = pieces.map((piece, n) => literals[n] == null
     ? words(context, ...piece)
     : literals[n].slice(+(!n && starts), n === last && ends ? -1 : undefined))
-  if (parts.some((part, n) => literals[n] != null && part.includes("%"))) {
+  if (literals.every(literal => literal == null) ||
+    parts.some((part, n) => literals[n] != null && part.includes("%"))) {
     phrase.text += ` ${tokens[at].text} `
     return at
   }
@@ -846,7 +858,7 @@ const READERS = [readModel, readCast, readWindow, readCastCall, readCall,
 // grouping() and negated calls in words, and a window's frame and order
 const polish = text => text.replace(/\s+/g, " ").replace(/([([]) /g, "$1")
   .replace(/ ([)\],])/g, "$1")
-  .replace(/<>|!=/g, "≠").replace(/>=/g, "≥").replace(/<=/g, "≤")
+  .replace(/<>|!=/g, "≠").replace(/>=/g, "≥").replace(/<=(?!>)/g, "≤")
   .replace(JSON_PATH, (_, value, keys) => [...keys.matchAll(JSON_KEY)]
     .reduce((path, key) => key[2] === "" ? path
       : key[3] ? `item ${key[3]} of ${path}`
@@ -864,7 +876,7 @@ const polish = text => text.replace(/\s+/g, " ").replace(/([([]) /g, "$1")
     (_, marked, count, side) => `${count == 1 ? "the row" : marked + " rows"
     } ${side === "preceding" ? "before" : "after"}`)
   .replace(/\border by\b/g, "in order of").replace(/\bdesc\b/g, "descending")
-  .replace(/\basc\b/g, "ascending").trim()
+  .replace(/\basc\b/g, "ascending").trim().replace(/,$/, "")
 
 // steps -----------------------------------------------------------------------
 
@@ -874,6 +886,9 @@ const polish = text => text.replace(/\s+/g, " ").replace(/([([]) /g, "$1")
 // gives the models that the token at an index names, as {models, length}
 const JOIN_STEPS = {"": "Join {0}, where {1}", inner: "Join {0}, where {1}",
   left: "Join {0} where {1}, keeping the rows with no match",
+  right: "Join {0} where {1}, keeping its rows with no match",
+  full: "Join {0} where {1}, keeping the rows of both with no match",
+  natural: "Join {0}, where the columns that they share are the same",
   semi: "Keep the rows with a match in {0}, where {1}",
   anti: "Keep the rows with no match in {0}, where {1}",
   cross: "Pair each row with every row of {0}",
@@ -939,19 +954,24 @@ const planQuery = (context, bracket, depth) => {
   if (scope.withAt >= 0) planCtes(context, bracket, scope)
   const clauses = scope.clauses.filter(at => at >= scope.mainAt)
   const sets = clauses.filter(at => SET_OPERATIONS.has(tokens[at].word))
+  const tail = clauses.filter(at => isTail(tokens, scope, at))
   ;[scope.mainAt - 1, ...sets].forEach((start, n) => {
-    const end = sets[n] ?? scope.end
+    const end = sets[n] ?? tail[0] ?? scope.end
     const own = clauses.filter(at => at > start && at < end)
-    if (!own.length) return
     const part = {context, tokens, bracket, depth, out, clauses: own, end,
       rows: null}
-    if (sets.length) {
-      addStep(part, n ? setStep(tokens, start) : "Take the rows of:",
-        n ? start : own[0])
-      part.depth++
-    }
+    const lead = n ? setStep(tokens, start) : "Take the rows of:"
+    let inner = start
+    do inner = next(tokens, inner)
+    while (/^(all|distinct|by|name)$/.test(tokens[inner]?.word))
+    if (!own.length) return queryBracket(tokens, inner, end) < 0 ||
+      addStep(part, lead.slice(0, -1) + " " + subqueryName(context, inner),
+        n ? start : scopeOf(tokens, inner).clauses[0])
+    if (sets.length) addStep(part, lead, n ? start : own[0]), part.depth++
     planPart(part)
   })
+  planPart({context, tokens, bracket, depth, out, clauses: tail,
+    end: scope.end, rows: null})
   return out
 }
 // each cte that is a query in brackets, as a query inside another
@@ -968,9 +988,11 @@ const planCtes = (context, bracket, scope) => {
   }
 }
 const setStep = (tokens, at) => {
-  const {word} = tokens[at], all = tokens[next(tokens, at)]?.word === "all"
-  return `${SET_STEPS[word]}${word === "union" && !all
-    ? ", less duplicates" : ""}:`
+  const {word} = tokens[at], first = next(tokens, at)
+  const all = tokens[first]?.word === "all"
+  const byName = tokens[all ? next(tokens, first) : first]?.word === "by"
+  return `${SET_STEPS[word]}${byName ? ", by their columns' names" : ""}${
+    word === "union" && !all ? ", less duplicates" : ""}:`
 }
 // a part of a query: its clauses' steps, in the order that they run
 const planPart = part => {
@@ -987,7 +1009,8 @@ const planPart = part => {
   named("order").forEach(at => addStep(part, "Sort by " +
     words(part.context, ...clauseBody(part, at)), at))
   named("limit").forEach(at => addStep(part, `Keep the first ${
-    words(part.context, ...clauseBody(part, at))} rows`, at))
+    words(part.context, ...clauseBody(part, at))} rows`
+    .replace(/ offset (.*) rows$/, " rows after the first $1"), at))
 }
 const clausesNamed = (part, word) =>
   part.clauses.filter(at => part.tokens[at].word === word)
@@ -1018,6 +1041,8 @@ const queryBracket = (tokens, from, to) => {
 }
 // a table, or a query in brackets
 const tableOrQuery = (part, from, to) => {
+  if (part.tokens[next(part.tokens, from - 1)].word === "lateral")
+    from = next(part.tokens, from - 1) + 1
   const bracket = queryBracket(part.tokens, from, to)
   return bracket < 0 ? tableSource(part, [from, to])
     : subqueryName(part.context, bracket)
@@ -1038,7 +1063,7 @@ const pivotStep = (part, at) => {
   const using = find(unpivot ? "into" : "using")
   const name = find("name", using), value = find("value", using)
   const columns = on < to ? words(context, next(tokens, on), using)
-    : "every column"
+    .replace(/ is (?:either |one of )?(.*)$/, " ($1)") : "every column"
   addStep(part, unpivot ? `Make a row for each of ${columns} in ${table}, ` +
     `with the column's name as ${name < to ? words(context, next(tokens,
     name), value) : "name"} and its value as ${value < to ? words(context,
@@ -1125,15 +1150,19 @@ const groupStep = (part, at) => {
 const selectStep = (part, at) => {
   const {context, tokens} = part
   let [from, to] = clauseBody(part, at), verb = "Return"
-  if (tokens[from].word === "distinct")
+  if (tokens[from].word === "distinct") {
     from = next(tokens, from), verb = "Without duplicates, return"
+    const paren = tokens[from].word === "on" && parenAfter(tokens, from)
+    if (paren) verb = `For the first row of each ${words(context, paren + 1,
+      tokens[paren].close)}, return`, from = tokens[paren].close + 1
+  }
   const columns = splitAtCommas(tokens, from, to, part.bracket)
     .map(([start, end]) => {
       const [expressionEnd, name] = columnName(tokens, start, end)
       const expression = words(context, start, expressionEnd)
       return name && name !== expression ? `${name}: ${expression}`
         : starColumns(part, start, end) ?? expression
-    })
+    }).filter(Boolean)
   addStep(part, `${!clausesNamed(part, "from").length ? "Make one row of"
     : totalsAllRows(part, from, to) ? "Over all the rows, return" : verb}:`,
     at, {columns})
@@ -1416,15 +1445,18 @@ const rowsView = (status, out) => {
     say(text, error))
   return run
 }
-// the first of a list of queries that runs, and its first rows
+// the first of a list of queries that runs, and its first rows; if none
+// does, the first one's error
 const firstThatRuns = async tries => {
-  for (const [n, sql] of tries.entries()) {
+  let first
+  for (const sql of tries) {
     try {
       return {sql, table: await fetchRows(sql, 0)}
     } catch (error) {
-      if (n === tries.length - 1) throw error
+      first ??= error
     }
   }
+  throw first
 }
 // a table's rows, at most PAGE_ROWS of them, as text
 const tableRows = (table, types) => {
@@ -1547,8 +1579,9 @@ const exists = async path =>
 // the files by the paths that the sql names (a table's, and each local
 // source's) and the macros, as in make, less the shell's dot commands; each
 // built model a view on its table, made when a model that reads it is
-// opened, since making it reads the table's file. getenv() is empty: no
-// variable's value is written for the page
+// opened, since making it reads the table's file. a shapefile is read with
+// the files beside it. getenv() gives what the viewer types for a
+// variable, else nothing: no variable's value is written for the page
 const literal = value => `'${String(value).replaceAll("'", "''")}'`
 const quoted = name => `"${name.replaceAll('"', '""')}"`
 const glob = pattern => new RegExp("^" + pattern
@@ -1557,12 +1590,15 @@ const glob = pattern => new RegExp("^" + pattern
     ({"*": "[^/]*", "?": "[^/]"})[wildcard] ?? "(.*/)?") + "$")
 const LOCAL = path => !/^[/~]|\.\.\/|:\/\/|[*?]/.test(path)
 await Promise.all([...new Set(nodes.flatMap(node => [...node.files,
-  ...node.sources, ...node.test ? [] : [node.out]]).filter(LOCAL))]
-  .map(path => registerFile(path, "files/" + path)))
-// geoparquet's geometry as its bytes: duckdb-wasm's spatial fails on some
-// files' metadata ("stoi: no conversion")
+  ...node.sources, ...node.test ? [] : [node.out]]).filter(LOCAL)
+  .flatMap(path => ["shp", "shx", "dbf", "prj", "cpg"].map(end =>
+    path.replace(/shp$/, end))))].map(async path => (!/\.(shx|dbf|prj|cpg)$/
+    .test(path) || await exists(path)) && registerFile(path, "files/" + path)))
+// geoparquet's geometry is read as its bytes, and a table's view makes
+// geometry of them: duckdb-wasm's own conversion fails on a file whose
+// metadata names no crs ("stoi: no conversion")
 await query("set enable_geoparquet_conversion = false")
-await query("create macro getenv(k) as ''")
+await query("create macro getenv(k) as coalesce(getvariable(k), '')")
 for (const node of nodes) {
   const header = node.sql.match(/^(--( .*)?\n)*/)[0]
   const [schema, table] = node.id.includes(".") ? node.id.split(".")
@@ -1576,15 +1612,24 @@ for (const node of nodes) {
 }
 await Promise.all(nodes.map(async node => node.built = !node.test &&
   (LOCAL(node.out) ? await exists(node.out) : node.files.length > 0)))
+// what a table's file stores: the sql that made it, and geoparquet's columns
+const stored = node => node.stored ??= rowsOf(`select decode(key) k,
+  any_value(decode(value)) v from parquet_kv_metadata(${literal(node.out)})
+  where decode(key) in ('sql', 'geo') group by all`).then(rows =>
+  Object.fromEntries(rows.map(row => [row.k, row.v])), () => ({}))
 // whether a table stores sql that differs from its model's file
-const isStale = async node => node.built && (await rowsOf(`select
-  bool_or(decode(value) <> ${literal(node.sql)}) stale
-  from parquet_kv_metadata(${literal(node.out)})
-  where decode(key) = 'sql'`).catch(() => [{}]))[0].stale === true
+const isStale = async node => node.built &&
+  ((await stored(node)).sql ?? node.sql) !== node.sql
+const makeView = async node => {
+  const geometry = Object.keys(JSON.parse((await stored(node)).geo ?? "{}")
+    .columns ?? {}).map(column => `st_geomfromwkb(${quoted(column)}) as ${
+    quoted(column)}`)
+  return query(`create schema if not exists ${node.schema};
+    create view ${node.view} as select *${geometry.length
+    ? ` replace (${geometry})` : ""} from ${literal(node.out)}`)
+}
 const makeViews = node => Promise.all([...upstream(node), node]
-  .filter(other => other.built).map(other => other.made ??= query(
-    `create schema if not exists ${other.schema};
-    create view ${other.view} as from ${literal(other.out)}`)
+  .filter(other => other.built).map(other => other.made ??= makeView(other)
     .catch(error => console.warn(other.id, error.message))))
 for (const {file, sql} of project.macros)
   for (const statement of statements(sql.replace(/^\..*$/gm, "")))
@@ -1803,6 +1848,7 @@ const sqlText = (tokens, ref, plan) => {
 // reads, its lineage, then its sql and its table's rows (a test's failing
 // rows); with no hash, the lineage of every table and test. its place in
 // the list comes into view, or on a phone the top of the page
+const env = {}
 const openNode = async () => {
   const id = decodeURIComponent(location.hash.slice(1)), node = byId[id]
   const link = nav.querySelector(`[data-id="${CSS.escape(id)}"]`)
@@ -1820,7 +1866,12 @@ const openNode = async () => {
   head.append(...[node.desc && element("p", {}, node.desc),
     node.note && element("p", {className: "note"}, node.note),
     element("p", {className: "file"}, node.file,
-      ...node.env.map(name => element("span", {}, "$" + name))),
+      ...node.env.map(name => element("input", {placeholder: "$" + name,
+        ariaLabel: name, value: env[name] ?? "", onchange: async event => {
+          await query(`set variable ${quoted(name)} =
+            ${literal(env[name] = event.target.value)}`)
+          openNode()
+        }}))),
     lineage([...upstream(node), node, ...downstream(node)], node)]
     .filter(Boolean))
   showQuery(node), await makeViews(node)

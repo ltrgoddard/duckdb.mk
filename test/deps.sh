@@ -43,6 +43,9 @@ d files "select id from read_csv('data/x.csv') union all from 'bare.csv' union a
 e "local files" files "\$(wildcard bare.csv) data/made.csv data/x.csv"
 d glob "from read_csv('data/*.csv')"
 e "globs" glob "\$(wildcard data/*.csv) FORCE"
+mkdir -p data/y=1 && printf 'id\n4\n' > data/y=1/h.csv
+d hive "select id from read_csv('data/y=*/h.csv') union all select id from 'data/y=1/h.csv'"
+e "a hive partition's = in a path" hive "\$(wildcard data/y=*/h.csv) \$(wildcard data/y=1/h.csv) FORCE"
 d rglob "select count(*) as n from read_parquet('build/**/*.parquet', union_by_name = true)"
 e "recursive glob" rglob "FORCE $(find models -name '*.sql' ! -name rglob.sql |
   sed 's/^models/build/; s/sql$/parquet/' | sort | xargs)"

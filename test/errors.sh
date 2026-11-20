@@ -4,7 +4,8 @@ echo "select 1 as id" > models/ok.sql
 t "valid project" "build/ok.parquet"
 
 try() { echo "$2" > "models/$1.sql"; t "$3" "!$4"; rm "models/$1.sql"; }
-try bad "SELEC 1" "parse error" 'models/bad.sql: syntax error at or near'
+try bad "SELEC 1" "parse error" 'models/bad.sql:1: syntax error at or near'
+try bad $'select 1,\n  2 +\nfrom ok' "parse error's line" 'models/bad.sql:3: syntax error at or near'
 try bad "select 1; select 2" "two statements" "models/bad.sql: expected one SELECT statement"
 try bad "-- only a comment" "no statement" "models/bad.sql: expected one SELECT statement"
 try bad "" "empty file" "models/bad.sql: expected one SELECT statement"
@@ -33,6 +34,10 @@ t "fixed" ""
 
 echo "from missing" > models/orphan.sql
 t "missing table" "!Table with name missing does not exist"
+printf -- '-- its own lines\nselect id,\n  nope\nfrom ok;\n\n' > models/orphan.sql
+t "an error's line in the file" "!LINE 3:   nope"
+printf 'select id\nfrom ok\nwhere nope' > tests/orphan.sql
+t "an error's line in a test" "!LINE 3: where nope" test; rm tests/orphan.sql
 echo "from read_csv('data/missing.csv')" > models/orphan.sql
 t "missing file" "!No rule to make target"
 rm models/orphan.sql
@@ -52,8 +57,8 @@ echo "select if(range = 3000000, error('late'), range) as id from range(4000000)
 t "new model fails midway" "!late"
 is "failed new model leaves no output" "$(find build -name 'new*')" ""
 rm models/new.sql
-echo "select 1 as id" > models/ok.sql
-t "recovered" "build/ok.parquet"
+printf 'select 1 as id -- a comment; \n ;\n\n' > models/ok.sql
+t "recovered, with a final semicolon and comment" "build/ok.parquet"
 
 echo "from ok where id > 0" > tests/fails.sql
 t "failing test" "!tests/fails.sql: 1 failing rows, e.g. [{'id': 1}]" test

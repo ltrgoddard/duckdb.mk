@@ -1,5 +1,5 @@
-# the inspector: make's plan.mk linked beside it, and the files it links, with nothing
-# built for it
+# the inspector: the plan written beside it as make's is, and the files it links, with
+# nothing built for it
 cp -R "$here/inspect" . && printf 'export REGION = north\ninclude duckdb.mk\n' > Makefile
 mkdir -p models/s/deep tests macros data && printf 'id,k\n1,a\n2,b\n' > data/x.csv
 echo "-- Rows.
@@ -7,6 +7,7 @@ select *, getenv('REGION') as r, getenv('SECRET') as s from read_csv('data/x.csv
 echo "from s.a" > 'models/s/deep/Part@k.sql'
 echo "with a as (from s.part) from a, read_csv('http://example.org/x.csv')" > models/top.sql
 echo "from 'build/s/deep/Part/*/data.parquet' union all from top" > models/late.sql
+touch data/z.shp data/z.shx data/z.dbf data/z.zip && echo "from st_read('data/z.shp')" > models/shape.sql
 echo "from top where id < 0" > tests/t.sql
 echo "create macro twice(x) as x * 2;" > macros/m.sql
 # pl <start>: the values of the lines of the plan beside the page that start so, sorted
@@ -16,9 +17,10 @@ ls_files() { (cd build/inspect/files && find . -type f | sort | xargs); }
 export SECRET=hush
 t "nothing is built" "" -s inspect
 is "the page" "$(ls build/inspect | xargs)" 'files index.html plan.mk'
-is "make's plan, linked" "$(find build/plan.mk -links 2 | wc -l | xargs)" 1
-is "the sql and the source" "$(ls_files)" \
-  './data/x.csv ./macros/m.sql ./models/late.sql ./models/s/a.sql ./models/s/deep/Part@k.sql ./models/top.sql ./tests/t.sql'
+is "make's plan is not written again" "$(find build/plan.mk -newer build/inspect/index.html | wc -l | xargs)" 0
+is "the sql, the source, and a shapefile with the files beside it" "$(ls_files)" \
+  './data/x.csv ./data/z.dbf ./data/z.shp ./data/z.shx ./macros/m.sql ./models/late.sql ./models/s/a.sql ./models/s/deep/Part@k.sql ./models/shape.sql ./models/top.sql ./tests/t.sql'
+rm data/z.* models/shape.sql
 is "macros, in the plan" "$(pl 'macros +=')" 'macros/m.sql'
 is "each node's file, in the plan" "$(pl 'test/t:') $(pl 'build/s/deep/Part:')" \
   'build/top.parquet tests/t.sql build/s/a.parquet models/s/deep/Part@k.sql'
