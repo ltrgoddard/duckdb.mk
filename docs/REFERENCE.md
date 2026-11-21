@@ -319,7 +319,9 @@ built, and its SQL and steps can still be read.
 ### Connection
 
 `make inspect` starts DuckDB with the macros, a view of each built model (as
-`make shell` does) and the plan, in a database named `plan`. DuckDB serves
+`make shell` does) and the plan, in a database named `plan`. A setting
+that the macros change with `set` is made global, so that the page's
+connection has it too. DuckDB serves
 them on `localhost:$(PORT)` over its
 [Quack](https://duckdb.org/docs/current/quack/overview) protocol, with a
 random token for each run. Make then opens the page in the default browser

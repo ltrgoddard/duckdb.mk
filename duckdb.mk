@@ -54,8 +54,10 @@ shell:
 # cat gives duckdb its input, so that it stays, with no prompt, until that ends
 inspect: $(page)
 	@t=$$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n'); u="file://$(abspath $(page))#$(PORT):$$t"; \
+	  g=$$($(db) -cmd 'create temp table s0 as from duckdb_settings()' \
+	  -cmd '.output /dev/null' $(macros:%=-cmd '.read %') -cmd '.output' -c "$$GLOBAL"); \
 	  { sleep 1; xdg-open "$$u" || echo "$$BROWSE" | osascript - "$$u"; } >/dev/null 2>&1 & \
-	  cat | $(DUCKDB) $(macros:%=-cmd '.read %') -cmd '.output /dev/null' -cmd "attach ':memory:' as plan; use plan" \
+	  cat | $(DUCKDB) $(macros:%=-cmd '.read %') -cmd "$$g" -cmd '.output /dev/null' -cmd "attach ':memory:' as plan; use plan" \
 	  -cmd "$$PLAN" -cmd "use memory; $$VIEWS" -cmd "from quack_serve('quack:localhost:$(PORT)', token := '$$t')" \
 	  -cmd "call enable_logging('QueryLog', storage := 'stdout')" -cmd '.output' -cmd ".print open $$u" | \
 	  awk -v w=$$(tput cols 2>/dev/null || echo 999) "$$LOG"
@@ -291,6 +293,14 @@ on run {u}
 end run
 endef
 
+# a set in the macros is the session's, and the page's is another: each that
+# they change, made global
+define GLOBAL
+select coalesce(string_agg(format('set global {} = ''{}'';', name,
+  replace(value, '''', '''''')), ' '), '') from (select name, value
+  from duckdb_settings() where scope = 'LOCAL' except select name, value from s0)
+endef
+
 # duckdb's log of the page's queries, a line each, cut to the terminal's
 # width, less quack's own; a line that is not of the log, as it is
 define LOG
@@ -361,4 +371,4 @@ define PASS
 $(if $(quiet),,select '$@: pass';)
 endef
 
-export PLAN PRELUDE FRESH WRITE ASSERT PASS BROWSE LOG
+export PLAN PRELUDE FRESH WRITE ASSERT PASS BROWSE LOG GLOBAL

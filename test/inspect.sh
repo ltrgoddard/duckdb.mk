@@ -11,7 +11,7 @@ echo "-- Rows.
 select *, getenv('REGION') as r from read_csv('data/x.csv')" > models/s/a.sql
 echo "from s.a where id > 1" > models/top.sql
 echo "from top where id < 0" > tests/t.sql
-echo "create macro twice(x) as x * 2;" > macros/m.sql
+printf "create macro twice(x) as x * 2;\nset errors_as_json = true;\n" > macros/m.sql
 $MAKE -s DUCKDB="$DUCKDB" tables/s/a.parquet > /dev/null
 
 # the inspector on a free port, with its input held open so that duckdb stays,
@@ -30,6 +30,8 @@ is "the plan" "$(sq "select string_agg(target, ' ' order by target) from plan.ma
   'tables/s/a.parquet tables/top.parquet test/t'
 is "a view on each built table, and the macros" "$(sq "select twice(id) from s.a order by id")" '2
 4'
+is "a setting of the macros, in the page's session" \
+  "$(sq "select current_setting('errors_as_json')")" true
 is "no view on a table not built" "$(sq "select count(*) from duckdb_views() where view_name = 'top'")" 0
 is "the variables, as make has them" "$(sq "select r from s.a limit 1")" north
 is "a wrong token" "$(sq "select 1" wrong | grep -c 'Authentication failed')" 1
