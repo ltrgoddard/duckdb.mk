@@ -12,6 +12,7 @@
   --bg: #000; --fg: #fff; --mute: #808080; --line: #262626; --panel: #111;
   --hi: #00a3a3; --err: #ff6b6b; --name: #98c379; --s: #e6c07b; --n: #d19a66;
   --mono: ui-monospace, "SF Mono", Menlo, monospace; color-scheme: dark;
+  --bar: 49px;
 }
 @media (prefers-color-scheme: light) { :root {
   --bg: #fff; --fg: #111; --mute: #737373; --line: #e5e5e5; --panel: #f5f5f5;
@@ -119,14 +120,14 @@ pre {
 ::highlight(NUMBER_LITERAL) { color: var(--n); }
 .status {
   position: sticky; top: 0; display: flex; gap: 12px; align-items: center;
-  height: 49px; margin: 0 -20px; padding: 0 20px; background: var(--bg);
+  height: var(--bar); margin: 0 -20px; padding: 0 20px; background: var(--bg);
   color: var(--mute);
 }
 .via { color: var(--fg); }
 .err { color: var(--err); white-space: pre-wrap; font: 12.5px var(--mono); }
 table { border-collapse: collapse; font: 12.5px var(--mono); }
 th {
-  position: sticky; top: 49px; background: var(--bg); text-align: left;
+  position: sticky; top: var(--bar); background: var(--bg); text-align: left;
   font-weight: 500;
 }
 th small { display: block; color: var(--mute); font-weight: 400; }
@@ -155,7 +156,8 @@ td:empty::after { content: "null"; color: var(--mute); }
 // the page is a client of the duckdb that make inspect runs, which opens it
 // as #<port>:<token>; :<node> after them names the node in view. duckdb has
 // the plan (in the database plan), a view on each built table and the
-// macros. the page's sections, in order: words; page
+// macros; the page adds to the plan the sql that is changed in it, and the
+// tables made from that. the page's sections, in order: words; page
 import {QuackClient} from
   "https://cdn.jsdelivr.net/npm/@quack-protocol/sdk@0.3.0/+esm"
 
@@ -799,8 +801,8 @@ const sync = async node => {
       select e.target, l.src from live l join plan.main.edge e on e.dep = l.t),
     via as (select t, list(src) filter (src != t) srcs from live group by t)
     select s.target id, to_json(coalesce(v.srcs, []))::varchar via,
-      if(v.t is null, null, json_deserialize_sql(json_serialize_sql(
-        coalesce(d.sql, s.content)))) sql
+      case when v.t is not null then json_deserialize_sql(
+        json_serialize_sql(coalesce(d.sql, s.content))) end sql
     from plan.main.src s left join via v on v.t = s.target
     left join plan.main.draft d on d.target = s.target`)
   const after = node ? reach(node, "dep", "target") : new Set
@@ -983,14 +985,14 @@ const via = () => current?.via.length ? [$("span", {class: "via"},
   current.via.flatMap((l, i, a) => [i ? i < a.length - 1 ? ", " : " and " : "",
     $("code", {}, l)]))] : []
 const rows = async sql => {
-  const run = ++running, t = performance.now()
+  const turn = ++running, t = performance.now()
   status.replaceChildren("Running…")
   try {
     const query = await sql
     const [data, types] = await Promise.all([all(
       `select columns(*)::varchar from (${query}) limit ${ROWS + 1}`),
       all(`describe ${query}`)])
-    if (run !== running) return
+    if (turn !== running) return
     const more = data.length > ROWS, n = types.length
     const count = $("button", {onclick: async () => {
       count.replaceWith($("span", {}, `${(await all(`select count(*)::int n
@@ -1008,7 +1010,7 @@ const rows = async sql => {
         {class: num[i] ? "num" : "", title: r[c.column_name] ?? ""},
         r[c.column_name]))))))
   } catch (e) {
-    if (run !== running) return
+    if (turn !== running) return
     const hint = HINTS().find(([re]) => re.test(e.message))?.[1]
     status.replaceChildren(...via())
     grid.replaceChildren($("p", {class: "err"}, hint ? `${hint}\n\n` : "",
@@ -1018,9 +1020,9 @@ const rows = async sql => {
 
 // a node: its head, its lineage, its steps and its sql, and the rows of
 // all of it. a click on a step, or on the sql of its clause, runs the query
-// to it and marks it in both
-// with no node, the schema: the lineage of every node, and its schemas'
-// colours
+// to it and marks it in both. its sql as changed and run is kept, and the
+// models after it are made again. with no node, the schema: the lineage of
+// every node, and its schemas' colours
 const [{dir}] = await all("select parse_filename(getenv('PWD')) dir")
 const narrow = matchMedia("(max-width: 860px)")
 const open = async node => {

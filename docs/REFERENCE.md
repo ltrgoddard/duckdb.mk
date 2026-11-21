@@ -252,7 +252,8 @@ random token for each run. Make then opens the page in the default browser
 as `file://.../inspect.html#<port>:<token>`, and prints that address
 in case the browser does not open it. The terminal then shows each query
 that the page runs, on one line, cut to the terminal's width. Press Ctrl+C
-or Ctrl+D to stop the inspector.
+or Ctrl+D to stop the inspector. For a shell on the same tables, run
+`make shell` in another terminal.
 
 The page does not change: it reads the port and the token from its address.
 It loads the [Quack client](https://github.com/tobilg/quack-protocol) from
@@ -277,13 +278,14 @@ built, and its SQL and steps can still be read.
 - A change flows to the nodes after it. When a change is run, DuckDB
   computes the changed model and each model after it once, in the order of
   the graph, and holds them as tables in memory. The wait is that of a
-  rebuild of those models. Such a node says `Recomputed from edit to` and the changed
-  model's name before its row count. A model that reads a table by its
-  path, not its name, does not see the change.
+  rebuild of those models. Such a node says `Recomputed from edit to` and
+  the changed model's name before its row count. A model that fails with
+  the change shows its error, and a node that reads it says so. A model
+  that reads a table by its path, not its name, does not see the change.
 - DuckDB keeps the changes in the table `plan.main.draft`, and the tables
-  computed from them in the schema `plan.live`, until
-  `make inspect` stops, so they outlast a reload of the page. Nothing is
-  written to a file or to a built table.
+  computed from them in the schema `plan.live`, until `make inspect`
+  stops, so they outlast a reload of the page. Nothing is written to a file
+  or to a built table.
 - A test shows the rows that fail it.
 - A model whose table stores SQL that differs from its file says to
   rebuild it when it is opened: its rows are from the earlier version.

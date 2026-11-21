@@ -51,6 +51,7 @@ shell inspect: export VIEWS = $(foreach m,$(models),$(if $(wildcard $m),$($m.vie
 shell:
 	@$(DUCKDB) $(macros:%=-cmd '.read %') -cmd "$$VIEWS"
 
+# cat gives duckdb its input, so that it stays, with no prompt, until that ends
 inspect: $(page)
 	@t=$$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n'); u="file://$(abspath $(page))#$(PORT):$$t"; \
 	  { sleep 1; xdg-open "$$u" || echo "$$BROWSE" | osascript - "$$u"; } >/dev/null 2>&1 & \

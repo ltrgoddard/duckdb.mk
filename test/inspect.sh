@@ -1,6 +1,7 @@
 # the inspector: make inspect, a duckdb that the page queries over quack, with
-# the plan, a view on each built table and the macros; and the steps in words
-# that the page's words section makes of a query
+# the plan, a view on each built table and the macros, and a line in the
+# terminal for each query; and the steps in words that the page's words
+# section makes of a query
 if [[ $($DUCKDB -init /dev/null -list -noheader -c "select version() >= 'v2'") != true ]]; then
   echo "ok   the inspector needs duckdb 2.0 (skipped)"; return 0
 fi
@@ -13,8 +14,8 @@ echo "from top where id < 0" > tests/t.sql
 echo "create macro twice(x) as x * 2;" > macros/m.sql
 $MAKE -s DUCKDB="$DUCKDB" tables/s/a.parquet > /dev/null
 
-# the inspector on a free port, with stdin held open so that duckdb stays, and a
-# browser that notes the url that it is given
+# the inspector on a free port, with its input held open so that duckdb stays,
+# and a browser that notes the url that it is given
 printf '#!/bin/sh\necho "$1" > opened\n' > bin/xdg-open && chmod +x bin/xdg-open
 port=$((20000 + RANDOM % 20000)) && mkfifo in
 PATH=$PWD/bin:$PATH $MAKE -s DUCKDB="$DUCKDB" PORT=$port inspect < in > out 2>&1 &
