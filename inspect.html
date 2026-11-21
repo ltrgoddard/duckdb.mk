@@ -81,6 +81,8 @@ header .warn { color: var(--err); }
 code, pre { font: 12.5px/1.5 var(--mono); }
 svg { display: block; margin-top: 12px; font: 12px var(--mono); }
 svg path { fill: none; stroke: var(--mute); opacity: .5; }
+svg:has(a:hover) path { opacity: .2; }
+svg:has(a:hover) path.on { stroke: var(--hi); opacity: 1; stroke-width: 2; }
 svg rect { fill: var(--panel); stroke: var(--line); }
 svg a:hover rect, svg .on rect { stroke: var(--hi); }
 svg text { fill: var(--fg); }
@@ -129,6 +131,17 @@ td {
 }
 td.num { text-align: right; }
 td:empty::after { content: "null"; color: var(--mute); }
+/* on a narrow screen, the panes one above another, and the list last */
+@media (max-width: 860px) {
+  body {
+    height: auto; grid: "head" auto "q" auto "rows" 80vh "nav" auto /
+      minmax(0, 1fr);
+  }
+  header, body.all header { grid-row: auto; max-height: none; }
+  #rows { border: 0; border-top: 1px solid var(--line); }
+  nav { border: 0; border-top: 1px solid var(--line); }
+  .drag { display: none; }
+}
 </style>
 <body data-msg="Run make serve to open the inspector.">
 <script type="module">
@@ -857,19 +870,24 @@ const lineage = (shown, node) => {
   const w = 16 + 7.3 * Math.max(...shown.map(n => label(n).length)), h = 22
   const xy = Object.fromEntries(cols.flatMap((col, x) => col.map((n, y) =>
     [n.id, [x * (w + 48), y * (h + 8)]])))
-  return $("svg", {width: cols.length * (w + 48) - 48,
+  // a node's lines, marked while it is under the pointer
+  const light = id => svg.querySelectorAll("path").forEach(p =>
+    p.classList.toggle("on", p.dataset.ends.split(" ").includes(id)))
+  const svg = $("svg", {width: cols.length * (w + 48) - 48,
     height: Math.max(...cols.map(c => c.length)) * (h + 8) - 8},
     edges.filter(e => xy[e.dep] && xy[e.target]).map(e => {
       const [x0, y0] = xy[e.dep], [x1, y1] = xy[e.target], m = (x0 + w + x1) / 2
-      return $("path", {d: `M${x0 + w} ${y0 + h / 2}C${m} ${y0 + h / 2} ${m
-        } ${y1 + h / 2} ${x1} ${y1 + h / 2}`})
+      return $("path", {"data-ends": `${e.dep} ${e.target}`, d: `M${x0 + w} ${
+        y0 + h / 2}C${m} ${y0 + h / 2} ${m} ${y1 + h / 2} ${x1} ${y1 + h / 2}`})
     }),
-    shown.map(n => $("svg:a", {href: href(n), class: n === node ? "on" : ""},
+    shown.map(n => $("svg:a", {href: href(n), class: n === node ? "on" : "",
+      onpointerenter: () => light(n.id), onpointerleave: () => light()},
       $("rect", {x: xy[n.id][0], y: xy[n.id][1], width: w, height: h}),
       $("rect", {x: xy[n.id][0], y: xy[n.id][1], width: 3, height: h,
         style: `fill: ${colour(n)}; stroke: none`}),
       $("text", {x: xy[n.id][0] + 10, y: xy[n.id][1] + 15,
         class: n.built || n.kind === "tests" ? "" : "off"}, label(n)))))
+  return svg
 }
 
 // the rows of a query, or of a promise of one: its first ROWS as duckdb
@@ -920,6 +938,7 @@ const rows = async sql => {
 // with no node, the schema: the lineage of every node, and its schemas'
 // colours
 const [{dir}] = await all("select parse_filename(getenv('PWD')) dir")
+const narrow = matchMedia("(max-width: 860px)")
 const open = async node => {
   for (const [n, a] of links) a.classList.toggle("on", n === node)
   schema.classList.toggle("on", !node)
@@ -928,7 +947,8 @@ const open = async node => {
   if (!node) return head.replaceChildren($("h1", {}, dir),
     $("p", {class: "legend"}, order.map(g => $("span",
       {style: `--c: ${colour(groups[g][0])}`}, g))), lineage(nodes))
-  links.get(node).scrollIntoView({block: "nearest"})
+  narrow.matches ? scrollTo(0, 0)
+    : links.get(node).scrollIntoView({block: "nearest"})
   const [lead = "", ...rest] = node.content.match(/^(\s*--.*\n)*/)[0]
     .split(/^\s*--\s*$/m)
   const prose = s => s.replace(/^\s*-- ?/gm, "").trim()
