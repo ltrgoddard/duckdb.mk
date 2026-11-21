@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# benchmarks for duckdb.mk: ./bench.sh [git ref ...] times the working copy and each ref,
+# benchmarks for duckdb.mk: test/bench [git ref ...] times the working copy and each ref,
 # reporting the best of three runs in seconds; set DUCKDB and MAKE to use other executables
-cd "$(dirname "$0")" && here=$PWD tmp=$(mktemp -d) versions=(working "$@")
+cd "$(dirname "$0")/.." && here=$PWD tmp=$(mktemp -d) versions=(working "$@")
 export DUCKDB=${DUCKDB:-duckdb} MAKE=${MAKE:-make} LC_ALL=C
 mkdir "$tmp/www"; python3 test/server.py "$tmp/www" > "$tmp/requests" 2>&1 & server=$!
 trap 'kill $server; wait $server 2>/dev/null; rm -rf "$tmp"' EXIT
@@ -40,17 +40,17 @@ row() {
 }
 
 printf '%-44s' "" && printf '%12s' "${versions[@]}" && echo
-row "plan, 500 models" "models 500" "rm -f build/plan.mk" "$MAKE build/plan.mk"
-row "plan, 2000 models" "models 2000" "rm -f build/plan.mk" "$MAKE build/plan.mk"
+row "plan, 500 models" "models 500" "rm -f tables/plan.mk" "$MAKE tables/plan.mk"
+row "plan, 2000 models" "models 2000" "rm -f tables/plan.mk" "$MAKE tables/plan.mk"
 row "plan, chain of 1000 models" "mkdir models && echo 'select 1 as n' > models/m0.sql && \
   for i in \$(seq 999); do echo \"select n + 1 as n from m\$((i - 1))\" > models/m\$i.sql; done" \
-  "rm -f build/plan.mk" "$MAKE build/plan.mk"
-row "build, 500 models, -j4" "models 500" "rm -rf build" "$MAKE -j4"
+  "rm -f tables/plan.mk" "$MAKE tables/plan.mk"
+row "build, 500 models, -j4" "models 500" "rm -rf tables" "$MAKE -j4"
 row "no-op, 500 models" "models 500 && $MAKE -j4" "" "$MAKE"
 row "rebuild after editing a root, 500 models" "models 500 && $MAKE -j4" "touch models/s0/m0.sql" "$MAKE -j4"
 row "one model, 20M rows" \
   "mkdir models && echo 'select range as id, hash(range) as h, range % 1000 as g, random() as r from range(20000000)' > models/big.sql" \
-  "rm -rf build" "$MAKE"
+  "rm -rf tables" "$MAKE"
 row "  the same query in duckdb alone" "" "rm -f big.parquet" \
   "$DUCKDB -c \"copy (select range as id, hash(range) as h, range % 1000 as g, random() as r from range(20000000)) to 'big.parquet'\""
 row "chain of four models over 10M rows" "mkdir models && \
@@ -58,7 +58,7 @@ row "chain of four models over 10M rows" "mkdir models && \
   echo 'select well, sum(oil) as oil, count(*) as n from a group by well' > models/b.sql && \
   echo 'select a.*, b.oil / b.n as mean from a join b using (well)' > models/c.sql && \
   echo 'select well, max(oil - mean) as peak from c group by well' > models/d.sql" \
-  "rm -rf build" "$MAKE"
+  "rm -rf tables" "$MAKE"
 row "no-op, 100 models reading http" "for i in \$(seq 100); do printf 'k,v\na,1\n' > $tmp/www/\$i.csv; \
   mkdir -p models && echo \"from read_csv('http://127.0.0.1:$HTTP/\$i.csv')\" > models/m\$i.sql; done && $MAKE -j4" \
   "" "$MAKE -j4"

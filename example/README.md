@@ -34,7 +34,7 @@ The first run takes a few minutes. Delete `data/` to fetch the data again.
     └── matches_unique.sql
 ```
 
-`build/dag.mmd` holds the dependency graph:
+`tables/dag.mmd` holds the dependency graph:
 
 ```mermaid
 flowchart LR

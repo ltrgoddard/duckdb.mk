@@ -1,3 +1,3 @@
-build/
+tables/
 data/
 .duckdb.mk/

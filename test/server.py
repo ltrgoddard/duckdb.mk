@@ -1,4 +1,4 @@
-# serves a directory over HTTP for test.sh, plus S3 through moto when installed;
+# serves a directory over HTTP for test/run, plus S3 through moto when installed;
 # prints "<http port> <s3 port or ->" once ready and logs "<method> <path> <status>" per request
 #   <dir>/bare/<file>  serves <dir>/<file> with no Last-Modified header
 #   <dir>/nohead/<file>  refuses HEAD requests

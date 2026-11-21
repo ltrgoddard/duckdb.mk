@@ -33,31 +33,31 @@ echo "from not_null('marts.revenue', 'id')" > tests/revenue_ids.sql
 echo "from remote where v < 0" > tests/remote_ok.sql
 echo "from remote_count where n <> (select count(*) from remote)" > tests/sub/remote_count.sql
 export REGION=eu
-all="build/customers.parquet build/marts/revenue.parquet build/marts/shadow.parquet build/raw_orders.parquet \
-build/remote.parquet build/remote_count.parquet build/seeds.parquet build/staging/customers.parquet \
-build/staging/orders.parquet"
+all="tables/customers.parquet tables/marts/revenue.parquet tables/marts/shadow.parquet tables/raw_orders.parquet \
+tables/remote.parquet tables/remote_count.parquet tables/seeds.parquet tables/staging/customers.parquet \
+tables/staging/orders.parquet"
 tests="test/remote_ok test/revenue_ids test/revenue_positive test/sub/remote_count"
 
 t "clean build" "$all $tests" all test
 t "no-op" ""
 t "no-op test run" "$tests" test
-is "row counts" "$(q "from 'build/marts/revenue.parquet' select string_agg(name || total::int, ' ' order by name)")" "ann3050 bob500"
+is "row counts" "$(q "from 'tables/marts/revenue.parquet' select string_agg(name || total::int, ' ' order by name)")" "ann3050 bob500"
 echo "from read_csv('seeds/orders.csv') where id > 0" > models/raw_orders.sql
-t "upstream edit" "build/marts/revenue.parquet build/marts/shadow.parquet build/raw_orders.parquet build/staging/orders.parquet"
+t "upstream edit" "tables/marts/revenue.parquet tables/marts/shadow.parquet tables/raw_orders.parquet tables/staging/orders.parquet"
 echo "-- a comment" >> models/raw_orders.sql
-t "comment edit" "build/marts/revenue.parquet build/marts/shadow.parquet build/raw_orders.parquet build/staging/orders.parquet"
+t "comment edit" "tables/marts/revenue.parquet tables/marts/shadow.parquet tables/raw_orders.parquet tables/staging/orders.parquet"
 touch seeds/customers.csv
-t "seed edit" "build/customers.parquet build/marts/revenue.parquet build/marts/shadow.parquet build/seeds.parquet build/staging/customers.parquet"
+t "seed edit" "tables/customers.parquet tables/marts/revenue.parquet tables/marts/shadow.parquet tables/seeds.parquet tables/staging/customers.parquet"
 printf 'id,extra\n9,x\n' > seeds/extra.csv
-t "new file matching a glob" "build/seeds.parquet"
+t "new file matching a glob" "tables/seeds.parquet"
 rm seeds/extra.csv
-t "file matching a glob removed" "build/seeds.parquet"
-t "env change" "build/marts/shadow.parquet" REGION=us
+t "file matching a glob removed" "tables/seeds.parquet"
+t "env change" "tables/marts/shadow.parquet" REGION=us
 t "env unchanged" "" REGION=us
-t "env unset" "build/marts/shadow.parquet" REGION=
-t "env reverted" "build/marts/shadow.parquet"
+t "env unset" "tables/marts/shadow.parquet" REGION=
+t "env reverted" "tables/marts/shadow.parquet"
 printf 'k,v\na,1\nb,2\n' > "$www/remote.csv"
-t "remote change rebuilds its dependents" "build/remote.parquet build/remote_count.parquet"
+t "remote change rebuilds its dependents" "tables/remote.parquet tables/remote_count.parquet"
 t "remote unchanged" ""
 t "remote unchanged leaves its dependents" "$tests" test
 echo "create macro cents(x) as (x * 100)::bigint;" > macros/cents.sql
@@ -66,16 +66,16 @@ echo "-- nothing yet" > macros/new.sql
 t "new macro" "$all"
 rm macros/new.sql
 t "deleted macro file" "$all"
-t "single target" "" build/marts/revenue.parquet
+t "single target" "" tables/marts/revenue.parquet
 touch models/staging/orders.sql
-t "single target rebuilds only its own dependencies" "build/marts/revenue.parquet build/staging/orders.parquet" \
-  build/marts/revenue.parquet
-t "single target is up to date" "" build/marts/shadow.parquet
+t "single target rebuilds only its own dependencies" "tables/marts/revenue.parquet tables/staging/orders.parquet" \
+  tables/marts/revenue.parquet
+t "single target is up to date" "" tables/marts/shadow.parquet
 t "single test builds what it needs" "test/revenue_ids" test/revenue_ids
 t "nested test" "test/sub/remote_count" test/sub/remote_count
-touch models/raw_orders.sql && touch build/.before
-is "dry run builds nothing" "$($MAKE -n >/dev/null && find build -name '*.parquet' -newer build/.before)" ""
-t "after a dry run" "build/marts/revenue.parquet build/marts/shadow.parquet build/raw_orders.parquet build/staging/orders.parquet"
+touch models/raw_orders.sql && touch tables/.before
+is "dry run builds nothing" "$($MAKE -n >/dev/null && find tables -name '*.parquet' -newer tables/.before)" ""
+t "after a dry run" "tables/marts/revenue.parquet tables/marts/shadow.parquet tables/raw_orders.parquet tables/staging/orders.parquet"
 t "always make" "$all" -B
 echo "from marts.revenue where total > 0" > tests/fails.sql
 t "failing test" "!tests/fails.sql: 2 failing rows" test
@@ -89,10 +89,10 @@ mv models/customers.sql .
 t "deleted dependency" "!shadow.parquet] Error"
 mv customers.sql models
 t "restored dependency" ""
-echo "from 'build/customers.parquet'" > models/by_path.sql
-t "reference by path" "build/by_path.parquet"
+echo "from 'tables/customers.parquet'" > models/by_path.sql
+t "reference by path" "tables/by_path.parquet"
 echo "create table lookup as select 1 as k;" > macros/lookup.sql && echo "from lookup" > models/uses_lookup.sql
-t "table from a macro" "$all build/by_path.parquet build/uses_lookup.parquet"
+t "table from a macro" "$all tables/by_path.parquet tables/uses_lookup.parquet"
 rm macros/lookup.sql
 t "deleted macro" "!lookup does not exist"; rm models/uses_lookup.sql
 is "shell" "$(printf ".mode list\n.headers off\nselect count(*) from marts.revenue, staging.orders;" | $MAKE -s shell)" 6
@@ -100,15 +100,22 @@ is "shell has macros" "$(printf ".mode list\n.headers off\nselect cents(1.5);" |
 touch models/customers.sql
 t "silent" "" -s
 touch models/customers.sql
-t "not silent with an s in a variable" "build/by_path.parquet build/customers.parquet build/marts/shadow.parquet" X=s
-rm -r build
-t "parallel" "$all build/by_path.parquet $tests" -j8 all test
+t "not silent with an s in a variable" "tables/by_path.parquet tables/customers.parquet tables/marts/shadow.parquet" X=s
+rm -r tables
+t "parallel" "$all tables/by_path.parquet $tests" -j8 all test
 t "parallel no-op" "" -j8
-is "row count" "$(q "select count(*) from 'build/seeds.parquet'")" 5
-is "fingerprint stored" "$(q "select count(*) from parquet_kv_metadata('build/remote.parquet') where decode(key) = 'duckdb.mk'")" 1
-t "BUILD" "build/elsewhere/customers.parquet build/elsewhere/staging/customers.parquet" \
-  BUILD=build/elsewhere build/elsewhere/customers.parquet
+is "row count" "$(q "select count(*) from 'tables/seeds.parquet'")" 5
+is "fingerprint stored" "$(q "select count(*) from parquet_kv_metadata('tables/remote.parquet') where decode(key) = 'duckdb.mk'")" 1
+kv() { q "select decode(value) from parquet_kv_metadata('$1') where decode(key) = '$2'"; }
+is "sql stored" "$(kv tables/customers.parquet sql)" "from staging.customers"
+is "no commit outside git" "$(kv tables/customers.parquet commit)" ""
+git init -q && git add models && git -c user.name=t -c user.email=t commit -qm m
+touch models/customers.sql && $MAKE -s DUCKDB="$DUCKDB" tables/customers.parquet
+is "commit stored" "$(kv tables/customers.parquet commit)" "$(git describe --always --dirty)"
+rm -rf .git
+t "BUILD" "tables/elsewhere/customers.parquet tables/elsewhere/staging/customers.parquet" \
+  BUILD=tables/elsewhere tables/elsewhere/customers.parquet
 t "clean" "" clean
 is "clean removes the build" "$(ls | xargs)" "Makefile duckdb.mk macros models seeds tests"
 t "clean without a plan" "" clean
-t "clean and build" "$all build/by_path.parquet $tests" clean all test
+t "clean and build" "$all tables/by_path.parquet $tests" clean all test

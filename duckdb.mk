@@ -1,23 +1,26 @@
 DUCKDB ?= duckdb
-BUILD  ?= build
+BUILD  ?= tables
+INSPECT ?= $(BUILD)/inspect
 , := ,
 
 self   := $(lastword $(MAKEFILE_LIST))
 tree   := $(shell find models tests ! -path '* *' \( -type d -o -name '*.sql' \) 2>/dev/null)
 dirs   := $(filter-out %.sql,$(tree))
-macros := $(sort $(wildcard macros/*.sql))
 db     := $(DUCKDB) -init /dev/null -bail -list -noheader
-run    := $(db) -cmd '.output /dev/null' $(macros:%=-cmd '.read %') -cmd '.output' -c
+run     = $(db) -cmd '.output /dev/null' $(macros:%=-cmd '.read %') -cmd '.output' -c
 views   = $(foreach d,$^,$($d.view))
 by      = $($@.by)
 src     = $(if $(by),$(@:$(BUILD)/%=models/%@$(by).sql),$<)
+sql     = $$(awk '{s = s $$0 "\n"} END {sub(/[;[:space:]]+$$/, "", s); printf "%s", s}' $(src))
 flags   = $(if $(findstring =,$(firstword $(MAKEFLAGS))),,$(firstword -$(MAKEFLAGS)))
 quiet   = $(findstring s,$(flags))
-recheck = $(if $(filter-out FORCE,$?)$(findstring B,$(flags)),,$(run) "$$FRESH" 2>/dev/null ||)
+page   := $(dir $(self))inspect/index.html
+commit := $(shell git describe --always --dirty 2>/dev/null)
+recheck = $(if $(filter-out FORCE,$?)$(findstring B,$(flags)),,$(if $($@.sources),$(run),$(db) -c) "$$FRESH" 2>/dev/null ||)
 
 all:
 clean: ; rm -rf $(BUILD)
-.PHONY: all test shell clean FORCE
+.PHONY: all test shell inspect serve clean FORCE
 .DELETE_ON_ERROR:
 
 ifneq ($(filter-out clean,$(or $(MAKECMDGOALS),all)),)
@@ -29,24 +32,38 @@ all: $(models)
 test: $(tests)
 .PHONY: $(tests)
 
-$(BUILD)/plan.mk: $(self) $(tree)
+$(BUILD)/plan.mk: $(self) $(tree) $(wildcard macros)
 	@mkdir -p $(@D) && $(db) -c "$$PLAN" > $@
 
 $(BUILD)/%.parquet: models/%.sql $(wildcard macros) $(macros)
-	@$(recheck) { mkdir -p $(@D) && $(run) "$$MATERIALISE"; }
+	@$(recheck) { mkdir -p $(@D) && $(run) "$$PRELUDE" -c "copy ($(sql)$$WRITE"; }
 
 $(filter-out %.parquet,$(models)): $(wildcard macros) $(macros)
 	@ulimit -S -n $$(ulimit -H -n); $(recheck) { rm -rf $@.tmp $@.old && \
-	  mkdir -p $(@D) && $(run) "$$MATERIALISE" && for f in $@.tmp/*/*; do \
+	  mkdir -p $(@D) && $(run) "$$PRELUDE" -c "copy ($(sql)$$WRITE" && for f in $@.tmp/*/*; do \
 	  mv "$$f" "$${f%/*}/data.parquet"; done && { mv $@ $@.old 2>/dev/null; \
 	  mv $@.tmp $@ && rm -rf $@.old; }; } || { rm -rf $@.tmp; exit 1; }
 
 $(tests): test/%: tests/%.sql $(macros)
-	@$(run) "$$ASSERT"
+	@$(run) "$$PRELUDE" -c "$$ASSERT ($(sql)$$PASS"
 
-shell: export VIEWS = $(views)
-shell: $(models)
+shell: export VIEWS = $(foreach m,$(models),$(if $(wildcard $m),$($m.view)))
+shell:
 	@$(DUCKDB) $(macros:%=-cmd '.read %') -cmd "$$VIEWS"
+
+inspect: $(page)
+	@mkdir -p $(INSPECT) && cp $(page) $(INSPECT) && rm -rf $(INSPECT)/files && \
+	  $(db) -cmd '.output $(INSPECT)/plan.mk' -c "$$PLAN" -cmd '.output' -c "$$LS" > $(INSPECT)/.ls && \
+	  while IFS= read -r f; do t="$(INSPECT)/files/$$f" && mkdir -p "$$(dirname "$$t")" && \
+	  { ln -f "$$f" "$$t" 2>/dev/null || cp "$$f" "$$t"; }; done < $(INSPECT)/.ls && rm $(INSPECT)/.ls
+
+serve: inspect
+	@{ sleep 1 && python3 -m webbrowser http://localhost:8000/; } >/dev/null &
+	python3 -m http.server -d $(INSPECT) 8000
+
+$(page):
+	$(if $(DUCKDB_MK),curl -sSfL --create-dirs -o $@ https://raw.githubusercontent.com/ltrgoddard/duckdb.mk/$(DUCKDB_MK)/inspect/$(@F),\
+	  $(error put the inspect directory of duckdb.mk beside $(self)))
 
 define PLAN
 create table src as
@@ -58,13 +75,14 @@ select
   lower(parse_filename(stem)) as name
 from (
   select
-    filename as file,
+    filename as file, content,
     unnest(regexp_extract(filename, '^(models|tests)/(.+?)(?:@(\w+))?\.sql$$', ['kind', 'stem', 'col'])),
     json_serialize_sql(content, skip_null := true, skip_empty := true)::json as ast
   from read_text(['models/**/*.sql', 'tests/**/*.sql'])
 );
 
-select error(file || ': ' || coalesce(ast->>'error_message', 'expected one SELECT statement'))
+select error(file || ':' || coalesce(len(string_split(left(content, (ast->>'position')::int), chr(10))) || ':', '')
+  || ' ' || coalesce(ast->>'error_message', 'expected one SELECT statement'))
 from src
 where json_array_length(ast, '$$.statements') is distinct from 1;
 
@@ -99,6 +117,12 @@ select target, loc, lower(v->>'schema_name') as schema, lower(v->>'table_name') 
 from node
 where v->>'type' = 'BASE_TABLE';
 
+select error(s.file || ': no model ' || r.schema || '.' || r.name)
+from ref as r
+join src as s using (target)
+where r.schema in (select schema from src where kind = 'models')
+  and (r.schema, r.name) not in (select (schema, name) from src where kind = 'models');
+
 create table str as
 select target, v->>'table_name' as s
 from node
@@ -107,7 +131,10 @@ union
 select target, unnest(if(
   a->>'function_name' = 'list_value',
   json_extract_string(a, '$$.children[*].value.value') || json_extract_string(a, '$$.arguments[*].expression.literal.text'),
-  [coalesce(a->>'$$.value.value', a->>'$$.literal.text')]
+  [coalesce(a->>'$$.value.value', a->>'$$.literal.text', if(
+    a->>'function_name' = '||' and coalesce(a->>'$$.children[0].function_name', a->>'$$.arguments[0].expression.function_name') = 'getenv',
+    '$$(' || coalesce(a->>'$$.children[0].children[0].value.value', a->>'$$.arguments[0].expression.arguments[0].expression.literal.text')
+      || ')' || coalesce(a->>'$$.children[1].value.value', a->>'$$.arguments[1].expression.literal.text'), null))]
 ))
 from (select target, unnest(json_extract(v, '$$.function.children[*]') || json_extract(v, '$$.function.arguments[*].expression')) as a from node where v->>'type' = 'TABLE_FUNCTION');
 
@@ -116,7 +143,7 @@ select
   target, s,
   replace(replace(replace(replace(replace(s, '.', '\.'), '**/', '%'), '*', '[^/]*'), '?', '[^/]'), '%', '(.*/)?') as re
 from str
-where regexp_full_match(s, '[\w./~-]*[*?][\w./*?~-]*');
+where regexp_full_match(s, '[\w./~=-]*[*?][\w./*?~=-]*');
 
 create table edge as
 select r.target, m.target as dep
@@ -142,7 +169,7 @@ where not regexp_matches(r.name, '[./]')
 union
 select s.target, m.target
 from str as s
-join src as m on m.kind = 'models' and s.s = m.target
+join src as m on m.kind = 'models' and starts_with(s.s || '/', m.target || '/')
 union
 select s.target, m.target
 from str as s
@@ -150,7 +177,7 @@ join src as m on m.kind = 'models' and lower(s.s) = m.schema || '.' || m.name
 union
 select g.target, m.target
 from pat as g
-join src as m on m.kind = 'models' and m.target <> g.target and regexp_full_match(m.out, g.re);
+join src as m on m.kind = 'models' and m.target <> g.target and regexp_full_match(replace(m.out, '/*/', '/' || m.col || '=_/'), g.re);
 
 with recursive reach(target, dep) as (
   from edge
@@ -168,7 +195,7 @@ create table vol as
 from (
   select target, 'sources' as k, s as x
   from str
-  where regexp_matches(s, '^[a-z][a-z0-9+.-]*://')
+  where regexp_matches(s, '^[a-z][a-z0-9+.-]*://|^\$$\(')
   union
   select target, 'sources', s
   from pat
@@ -182,9 +209,24 @@ where target not like 'test/%'
 
 create table arc as
 select dep as d, target as t from edge where dep is not null
-union select s, target from str where regexp_full_match(s, '[\w./*?~-]+\.\w+')
+union select s, target from str where regexp_full_match(s, '[\w./*?~=-]+\.\w+')
   and lower(s) not in (select schema || '.' || name from src)
 union select x, target from vol where k = 'sources';
+
+set variable globs = (
+  select coalesce(list(distinct p), []) || ['$(BUILD)/.none']
+  from (
+    select out from src where kind = 'models' and col <> ''
+    union all select s from pat
+  ) as t(p)
+  where not regexp_matches(p, '^[/~]|\.\./')
+);
+create table found as
+select m.target as t, f.file as x
+from glob(getvariable('globs')) as f
+join (select target, out as re from src where col <> '' union all select target, re from pat) as m
+  on if(m.target in (select target from src where col <> ''), f.file glob m.re, regexp_full_match(f.file, m.re))
+where not starts_with(f.file, '$(INSPECT)/');
 
 create table vert as
 select n, 'n' || row_number() over (order by n) as id, coalesce(any_value(s), '[("' || replace(n, '"', '#quot;') || '")]') as s
@@ -216,24 +258,28 @@ from (
   union all
   select target || ': ' || coalesce(dep, '$$(dirs)') from edge
   union all
-  select target || ': ' || if(regexp_matches(s, '[*?]') or not contains(s, '/'), '$$(wildcard ' || s || ')', s)
+  select target || ': ' || if(regexp_matches(s, '[*?=]') or not contains(s, '/'), '$$(wildcard ' || s || ')', s)
   from str
-  where regexp_full_match(s, '[\w./*?~-]+\.\w+')
-    and not starts_with(s, '$(BUILD)/')
+  where regexp_full_match(s, '[\w./*?~=-]+\.\w+')
+    and not (starts_with(s, '$(BUILD)/') and (regexp_matches(s, '[*?]')
+      or exists (from src as m where starts_with(s || '/', m.target || '/'))))
     and lower(s) not in (select schema || '.' || name from src)
   union all
   select target || ': FORCE' from vol
   union all
-  select unnest([target || ': ' || file, target || '.by := ' || col]) from src where col <> ''
+  select target || ': ' || file from src
   union all
-  select target || '.' || k || ' += ' || replace(replace(replace(x, '''', ''''''), '$$', '$$$$'), '#', '\#')
-  from vol
+  select target || '.by := ' || col from src where col <> ''
+  union all
+  select target || '.' || k || ' += ' || replace(replace(replace(x, '''', ''''''), '$$', if(x like '$$(%', '$$', '$$$$')), '#', '\#')
+  from (select target, k, x from vol union all select t, 'files', x from found)
+  union all
+  select 'macros += ' || file from glob('macros/*.sql')
 ) as t(line)
 order by line;
 endef
 
-define PRELUDE
-$(views)
+define FP
 set variable sql = (select content from read_text('$(src)'));
 set variable fp = md5(concat_ws(
   chr(10),
@@ -249,8 +295,14 @@ set variable fp = md5(concat_ws(
 ));
 endef
 
+define PRELUDE
+$(views)
+$(FP)
+set partitioned_write_max_open_files = 1e9;
+endef
+
 define FRESH
-$(PRELUDE)
+$(FP)
 select error('stale')
 where getvariable('fp') is distinct from (
   select string_agg(distinct decode(value), '')
@@ -259,11 +311,11 @@ where getvariable('fp') is distinct from (
 );
 endef
 
-define MATERIALISE
-$(PRELUDE)
-set partitioned_write_max_open_files = 1e9;
-copy (from query(getvariable('sql'))) to '$@$(if $(by),.tmp)' (format parquet, write_partition_columns true, $(if $(PARQUET),$(PARQUET)$(,))
-  $(if $(by),partition_by "$(by)",use_tmp_file true), kv_metadata {'duckdb.mk': getvariable('fp')});
+define WRITE
+
+) to '$@$(if $(by),.tmp)' (format parquet, write_partition_columns true, $(if $(PARQUET),$(PARQUET)$(,))
+  $(if $(by),partition_by "$(by)",use_tmp_file true), kv_metadata {
+  'duckdb.mk': getvariable('fp'), 'sql': getvariable('sql'), 'commit': '$(commit)'});
 $(if $(by),$(ONE))
 $(if $(quiet),,select format('{}: {:,} rows', '$@', count(*)) from '$(if $(by),$@.tmp/*/*.parquet,$@)';)
 endef
@@ -275,11 +327,27 @@ having count(*) = 0 or count(*) > count(distinct parse_dirpath(file));
 endef
 
 define ASSERT
-$(PRELUDE)
-select error(format('{}: {:,} failing rows, e.g. {}', '$<', count(*), min(t, 3)))
-from query(getvariable('sql')) as t
-having count(*) > 0;
+select error(format('{}: {:,} failing rows, e.g. {}', '$<', count(*), min(t, 3))) from
+endef
+
+define PASS
+
+) as t having count(*) > 0;
 $(if $(quiet),,select '$@: pass';)
 endef
 
-export PLAN FRESH MATERIALISE ASSERT
+define LS
+set variable globs = (
+  select list(distinct p)
+  from (
+    select out from src where kind = 'models'
+    union all select d from arc
+    union all select regexp_replace(d, 'shp$$', '[sdpc][hbrp][xfjg]') from arc where d like '%.shp'
+    union all select unnest(['models/**/*.sql', 'tests/**/*.sql', 'macros/*.sql'])
+  ) as t(p)
+  where not regexp_matches(p, '^[/~]|\.\./|://')
+);
+select distinct file from glob(getvariable('globs')) where not starts_with(file, '$(INSPECT)/') order by file;
+endef
+
+export PLAN PRELUDE FRESH WRITE ASSERT PASS LS

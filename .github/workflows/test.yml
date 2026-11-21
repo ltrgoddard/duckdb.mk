@@ -17,4 +17,4 @@ jobs:
       - run: |
           curl -sSfL -o duckdb.zip https://github.com/duckdb/duckdb/releases/${{ matrix.duckdb }}/duckdb_cli-${{ runner.os == 'macOS' && 'osx-universal' || 'linux-amd64' }}.zip
           unzip -q duckdb.zip -d "$RUNNER_TEMP" && echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
-      - run: make --version | head -1 && duckdb --version && ./test.sh
+      - run: make --version | head -1 && duckdb --version && test/run

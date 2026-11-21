@@ -16,8 +16,13 @@ formalisation of an *ad hoc* approach that I've developed over many years of
 working on data journalism and research projects at NGOs.
 
 See [`example/`](example/) for a duckdb.mk project that analyses methane
-emissions using public data and [REFERENCE.md](REFERENCE.md) for the full
+emissions using public data and [docs/REFERENCE.md](docs/REFERENCE.md) for the full
 interface.
+
+![The inspector: a model's lineage, its query as steps in words, and its rows](docs/inspect.png)
+
+*A [Data Desk](https://datadesk.eco) project built with duckdb.mk, viewed
+with `make serve`*
 
 ## Compared with other tools
 
@@ -36,13 +41,13 @@ interface.
 You need [DuckDB](https://duckdb.org) 1.4.1 or later, GNU Make 3.81 or later
 (the version that ships with macOS works) and `curl`.
 
-Include this snippet at the top of your Makefile to install duckdb.mk v0.2.0
+Include this snippet at the top of your Makefile to install duckdb.mk v0.3.0
 on next build; set `DUCKDB_MK` to a newer tag, or `main`, to upgrade. Then
 write a `SELECT` query as a .sql file under `models/` and run `make` to
 generate a table.
 
 ```make
-DUCKDB_MK = v0.2.0
+DUCKDB_MK = v0.3.0
 include .duckdb.mk/$(DUCKDB_MK)/duckdb.mk
 .duckdb.mk/%/duckdb.mk:
 	curl -sSfL --create-dirs -o $@ \
@@ -65,8 +70,8 @@ group by customer
 
 ```console
 $ make
-build/staging/orders.parquet: 3 rows
-build/revenue.parquet: 2 rows
+tables/staging/orders.parquet: 3 rows
+tables/revenue.parquet: 2 rows
 $ make
 make: Nothing to be done for `all'.
 ```
@@ -92,7 +97,8 @@ want to build neat, reproducible data pipelines that run on a single machine.
 
 ## How to use it
 
-duckdb.mk is delivered as a single ~280-line file, which is mostly SQL.
+duckdb.mk is delivered as a single ~350-line file, which is mostly SQL; the
+inspector's page is one more file that Make fetches when you first use it.
 The recommended way to deploy it is to `include` it in your project's existing
 Makefile, alongside variable definitions and additional targets for things
 DuckDB can't do (e.g. downloading and extracting complex source data). For
@@ -107,25 +113,45 @@ other schemas and tables in the collection by name. A file named
 that column, and keeps the name `table`.
 
 Tests are stored in `tests/` and macros -- SQL run before every model statement
--- in `macros/`. Built Parquet tables are stored in `build/` organised by
+-- in `macros/`. Built Parquet tables are stored in `tables/` organised by
 schema. `data/` is conventionally used for downloaded source data, but this
 location is optional and sources are often remote.
 
 Build tables in the normal Make way, by running `make
-build/schema/table.parquet`. duckdb.mk will take care of dependencies,
+tables/schema/table.parquet`. duckdb.mk will take care of dependencies,
 including checking modification dates of local and remote resources to save on
 full rebuilds and ensure fresh data when needed. Each run also writes the
-dependency graph to `build/dag.mmd` as a [Mermaid](https://mermaid.js.org)
+dependency graph to `tables/dag.mmd` as a [Mermaid](https://mermaid.js.org)
 flowchart.
+
+## Inspector
+
+`make serve` opens a page that lists every model and test, draws the
+dependency graph from the plan, and shows each model's SQL as steps in plain
+words. A click on a step or a clause runs the query up to that point in the
+browser, with [DuckDB-Wasm](https://github.com/duckdb/duckdb-wasm), against
+the tables as Make last built them. See
+[docs/REFERENCE.md](docs/REFERENCE.md#inspector).
+
+## Agent skill
+
+[`docs/SKILL.md`](docs/SKILL.md) tells a coding agent
+how to build, test and hand over a duckdb.mk project. To install it for
+Claude Code in a project:
+
+```sh
+curl -sSfL --create-dirs -o .claude/skills/duckdb-mk/SKILL.md \
+  https://raw.githubusercontent.com/ltrgoddard/duckdb.mk/main/docs/SKILL.md
+```
 
 ## Development
 
-`./test.sh` runs the end-to-end tests in `test/` in parallel against real `make`
+`test/run` runs the end-to-end tests in `test/` in parallel against real `make`
 and `duckdb` executables (set `MAKE` and `DUCKDB` to try others). They cover
-rebuilds, dependency resolution, errors, partitioned models, remote sources
-over HTTP and S3, a pipeline over millions of generated rows and a random
+rebuilds, dependency resolution, errors, partitioned models, the inspector's
+files, remote sources over HTTP and S3, a pipeline over millions of generated rows and a random
 300-model project checked against an independent model of its dependency
-graph. `./bench.sh [git ref ...]` times the working copy against earlier
+graph. `test/bench [git ref ...]` times the working copy against earlier
 versions.
 
 Contributions -- bug fixes, ergonomics, new features -- are encouraged. Please

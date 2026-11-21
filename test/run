@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# end-to-end tests for duckdb.mk: ./test.sh [suite ...] runs test/<suite>.sh, or every suite,
+# end-to-end tests for duckdb.mk: test/run [suite ...] runs test/<suite>.sh, or every suite,
 # in parallel, each in a fresh project; set DUCKDB and MAKE to test other executables
-cd "$(dirname "$0")" && here=$PWD tmp=$(mktemp -d) start=$SECONDS pids=()
+cd "$(dirname "$0")/.." && here=$PWD tmp=$(mktemp -d) start=$SECONDS pids=()
 export DUCKDB=${DUCKDB:-duckdb} MAKE=${MAKE:-make} LC_ALL=C
 mkdir "$tmp/www"; python3 test/server.py "$tmp/www" > "$tmp/requests" 2>&1 & server=$!
 trap 'kill $server; wait $server 2>/dev/null; rm -rf "$tmp"' EXIT
@@ -12,7 +12,7 @@ until read -r HTTP S3 < "$tmp/requests"; do kill -0 $server || exit; sleep 0.1; 
 t() {
   local label=$1 want=$2 out got; shift 2
   out=$($MAKE DUCKDB="$DUCKDB" "$@" 2>&1); sleep $nap
-  got=$(grep -oE '^(build|test)/[^:]+' <<<"$out" | sort | xargs)
+  got=$(grep -oE '^(tables|test)/[^:]+' <<<"$out" | sort | xargs)
   [[ $want == !* ]] || want=$(xargs -n1 <<<"$want" | sort | xargs)
   if [[ $want == !* && $out == *"${want#!}"* || $want != !* && $got == "$want" ]]; then echo "ok   $label"
   else echo "FAIL $label: want [$want] got [$got]"; sed 's/^/     /' <<<"$out"; fi
@@ -24,9 +24,9 @@ is() {
   else echo "FAIL $1"; diff <(echo "$3") <(echo "$2") | grep '^[<>]' | head -20 | sed 's/^/     /'; fi
 }
 
-# deps <target>: the prerequisites the plan gives a target, sorted
+# deps <target>: the prerequisites the plan gives a target but its own file, sorted
 deps() {
-  $MAKE -s DUCKDB="$DUCKDB" build/plan.mk >/dev/null; sleep $nap; sed -n "s|^$1: ||p" build/plan.mk | sort | xargs
+  $MAKE -s DUCKDB="$DUCKDB" tables/plan.mk >/dev/null; sleep $nap; sed -n "s|^$1: ||p" tables/plan.mk | grep -vE "^(models|tests)/" | sort | xargs
 }
 
 # q <sql>: run a query in the project and print the rows
