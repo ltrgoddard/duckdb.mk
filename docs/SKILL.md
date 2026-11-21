@@ -134,8 +134,8 @@ CTEs is harder to review than two or three models.
 source (`read_csv('https://...')`, `read_parquet('s3://...')`) must not read
 another model: no join to one and no filter by one. Join the fetched table in
 a later model. A model that reads another model is rebuilt when that model
-changes, and the inspector computes it again each time it is shown after an
-edit to that model. If it also fetches, each of those is a new download.
+changes, and the inspector computes it again when that model is edited
+there. If it also fetches, each of those is a new download.
 
 **Select columns explicitly in final tables.** `select *` passes upstream
 changes through silently. Name the columns that a published table promises.

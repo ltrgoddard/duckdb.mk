@@ -119,7 +119,7 @@ pre {
 ::highlight(NUMBER_LITERAL) { color: var(--n); }
 .status {
   position: sticky; top: 0; display: flex; gap: 12px; align-items: center;
-  margin: 0 -20px; padding: 12px 20px; background: var(--bg);
+  height: 49px; margin: 0 -20px; padding: 0 20px; background: var(--bg);
   color: var(--mute);
 }
 .via { color: var(--fg); }
@@ -748,12 +748,14 @@ const all = async sql => (await db.queryArrow(sql)).toArray()
   .map(r => ({...r}))
 
 // what the page keeps in duckdb, so that it outlasts the page: each node's
-// sql as changed and run, and the models that had a table when duckdb started
+// sql as changed and run, the models that had a table when duckdb started,
+// and a schema for the tables that it makes after a change
 await all(`create table if not exists plan.main.draft (
     target varchar primary key, sql varchar);
   create table if not exists plan.main.built as
     select schema_name s, view_name n from duckdb_views()
-    where database_name = 'memory' and not internal`)
+    where database_name = 'memory' and not internal;
+  create schema if not exists plan.live`)
 
 // the nodes: each model and test, its depth (its longest path from a node
 // that reads none of the others), whether its table is built and its sql as
@@ -782,11 +784,14 @@ const ref = name => refs.get(name.toLowerCase()) && label(refs.get(name
   .toLowerCase()))
 const byLabel = Object.fromEntries(nodes.map(n => [label(n), n]))
 
-// the views, made again after a change: a changed model is a view of its sql
-// as changed, a model after one is a view of its file's sql, so that its rows
-// have the change, and any other is a view of its table as built. each node
-// gets the labels of the changed nodes before it
-const sync = async () => {
+// the views, after a change to a node: a changed model, and each model
+// after one, is a table in plan.live, made from its sql (as changed, or its
+// file's) in the order of the graph, and its view is of that table, so that
+// the rows after a change have it and are made once. any other model's view
+// is of its table as built. only the node and those after it are made again;
+// one whose sql fails has no view, and each node gets the labels of the
+// changed nodes before it
+const sync = async node => {
   const rs = await all(`
     with recursive live(t, src) as (
       select target, target from plan.main.draft
@@ -794,20 +799,24 @@ const sync = async () => {
       select e.target, l.src from live l join plan.main.edge e on e.dep = l.t),
     via as (select t, list(src) filter (src != t) srcs from live group by t)
     select s.target id, to_json(coalesce(v.srcs, []))::varchar via,
-      '"' || s.schema || '"."' || s.name || '"' view,
-      if(s.kind = 'tests', '', 'create schema if not exists "' || s.schema ||
-        '"; ' || case when v.t is not null then 'create or replace view ' ||
-          view || ' as ' || json_deserialize_sql(json_serialize_sql(
-            coalesce(d.sql, s.content)))
-        when b.n is not null then 'create or replace view ' || view ||
-          ' as from ' || chr(39) || s.out || chr(39)
-        else 'drop view if exists ' || view end || '; ') ddl
+      if(v.t is null, null, json_deserialize_sql(json_serialize_sql(
+        coalesce(d.sql, s.content)))) sql
     from plan.main.src s left join via v on v.t = s.target
-    left join plan.main.draft d on d.target = s.target
-    left join plan.main.built b on b.s = s.schema and b.n = s.name`)
-  for (const r of rs)
-    byId[r.id].via = JSON.parse(r.via).map(id => label(byId[id]))
-  await all(rs.map(r => r.ddl).join(""))
+    left join plan.main.draft d on d.target = s.target`)
+  const after = node ? reach(node, "dep", "target") : new Set
+  for (const r of rs.sort((a, b) => byId[a.id].depth - byId[b.id].depth)) {
+    const n = byId[r.id], v = `"${n.schema}"."${n.name}"`
+    const t = `plan.live."${n.id}"`
+    n.via = JSON.parse(r.via).map(id => label(byId[id]))
+    if (n.kind === "models" && after.has(n.id)) await all(r.sql
+      ? `create schema if not exists "${n.schema}";
+        create or replace table ${t} as ${r.sql};
+        create or replace view ${v} as from ${t}`
+      : `drop table if exists ${t}; ${n.built
+        ? `create or replace view ${v} as from '${n.out}'`
+        : `drop view if exists ${v}`}`)
+      .catch(() => all(`drop table if exists ${t}; drop view if exists ${v}`))
+  }
 }
 await sync()
 const href = n => `#${port}:${token}:${n.id}`
@@ -963,15 +972,16 @@ const lineage = (shown, node) => {
 // when asked for. an error of a kind in HINTS has its likely cause before it.
 // before them, the changed nodes that the node in view has its rows from
 const ROWS = 500
-const HINTS = [[/Referenced (table|column)|not found in FROM/, "This part " +
-  "cannot run alone if it uses columns of the query around it."],
-  [/Table with name|does not exist|No files found/, "A table that this " +
-  "reads is not built: make builds it."]]
+const HINTS = () => [[/Referenced (table|column)|not found in FROM/, "This " +
+  "part cannot run alone if it uses columns of the query around it."],
+  [/Table with name|does not exist|No files found/, current?.via.length
+    ? "A model that this reads fails with the edit."
+    : "A table that this reads is not built: make builds it."]]
 let running = 0, current
 const via = () => current?.via.length ? [$("span", {class: "via"},
   `Recomputed from edit${current.via.length > 1 ? "s" : ""} to `,
   current.via.flatMap((l, i, a) => [i ? i < a.length - 1 ? ", " : " and " : "",
-    $("code", {}, l)])), " "] : []
+    $("code", {}, l)]))] : []
 const rows = async sql => {
   const run = ++running, t = performance.now()
   status.replaceChildren("Running…")
@@ -986,9 +996,9 @@ const rows = async sql => {
       count.replaceWith($("span", {}, `${(await all(`select count(*)::int n
         from (${query})`))[0].n.toLocaleString()} rows in all`))
     }}, "Count")
-    status.replaceChildren($("span", {}, via(), `${Math.min(data.length, ROWS)
-      .toLocaleString()}${more ? "+" : ""} rows, ${n} column${n === 1 ? ""
-      : "s"} in ${Math.round(performance.now() - t)} ms`),
+    status.replaceChildren(...via(), $("span", {}, `${Math.min(data.length,
+      ROWS).toLocaleString()}${more ? "+" : ""} rows, ${n} column${n === 1
+      ? "" : "s"} in ${Math.round(performance.now() - t)} ms`),
       ...more ? [count] : [])
     const num = types.map(c => /INT|DECIMAL|DOUBLE|FLOAT|REAL/
       .test(c.column_type))
@@ -999,7 +1009,7 @@ const rows = async sql => {
         r[c.column_name]))))))
   } catch (e) {
     if (run !== running) return
-    const hint = HINTS.find(([re]) => re.test(e.message))?.[1]
+    const hint = HINTS().find(([re]) => re.test(e.message))?.[1]
     status.replaceChildren(...via())
     grid.replaceChildren($("p", {class: "err"}, hint ? `${hint}\n\n` : "",
       e.message))
@@ -1063,10 +1073,11 @@ const open = async node => {
     if (tree.statements?.length !== 1) return rows(Promise.reject(Error(
       tree.error_message ?? "Expected one SELECT statement.")))
     if (keep) {
+      status.replaceChildren("Running…")
       await all(text === node.content ? `delete from plan.main.draft
         where target = ${lit(node.id)}` : `insert or replace into
         plan.main.draft values (${lit(node.id)}, ${lit(text)})`)
-      await sync()
+      await sync(node)
     }
     const plan = explain(tree.statements[0].node, ref)
     // each step from the first keyword of its clause, as tokens mark it
