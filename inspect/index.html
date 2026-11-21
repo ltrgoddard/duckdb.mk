@@ -21,7 +21,8 @@
 body {
   margin: 0; height: 100vh; display: grid; background: var(--bg);
   color: var(--fg); grid: "nav head head" auto "nav q rows" 1fr /
-    16rem minmax(0, 1fr) minmax(0, 1fr);
+    var(--nav, 16rem) calc((100vw - var(--nav, 16rem)) * var(--split, .5))
+    minmax(0, 1fr);
   font: 14px/1.45 system-ui, sans-serif;
 }
 body:not(:has(nav))::after {
@@ -47,13 +48,32 @@ nav a {
   display: block; text-decoration: none; overflow: hidden;
   text-overflow: ellipsis;
 }
-nav a::before { content: "▎"; color: var(--c); }
+nav a::before, .legend span::before { content: "▎"; color: var(--c); }
+nav a.schema { margin-top: 12px; }
+nav a.schema::before { content: none; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font: 12px var(--mono);
+  color: var(--mute); }
+body.all header { grid-row: 1 / -1; max-height: none; border: 0; }
+body.all #q, body.all #rows, body.all .drag:not(:first-of-type) {
+  display: none;
+}
 nav a:hover, nav a.on { color: var(--hi); }
 .off { color: var(--mute); }
 header {
-  grid-area: head; padding: 16px 20px; max-height: 50vh; overflow: auto;
+  grid-area: head; padding: 16px 20px; max-height: var(--head, 50vh);
+  overflow: auto;
   border-bottom: 1px solid var(--line);
 }
+/* the lines between the panes, to drag */
+.drag {
+  z-index: 1; width: 8px; margin-right: -4px; justify-self: end;
+  cursor: col-resize; touch-action: none;
+}
+.drag.row {
+  width: auto; height: 8px; margin: 0 0 -4px; justify-self: stretch;
+  align-self: end; cursor: row-resize;
+}
+.drag:hover, .drag.on { background: var(--hi); opacity: .5; }
 h1 { margin: 0 0 4px; font: 500 18px var(--mono); }
 header p { margin: 4px 0; max-width: 80ch; }
 header .note, header code { color: var(--mute); }
@@ -66,6 +86,8 @@ svg a:hover rect, svg .on rect { stroke: var(--hi); }
 svg text { fill: var(--fg); }
 svg text.off { fill: var(--mute); }
 #q, #rows { overflow: auto; padding: 16px 20px; }
+#q { grid-area: q; }
+#rows { grid-area: rows; }
 #rows { border-left: 1px solid var(--line); padding-top: 0; }
 .view { margin-bottom: 12px; }
 .view button + button { margin-left: -1px; }
@@ -205,10 +227,42 @@ const view = v => {
 const toggle = $("div", {class: "view"}, ["steps", "sql"].map(v =>
   $("button", {value: v, onclick: () => view(v)}, v[0].toUpperCase() +
     v.slice(1).replace("ql", "QL"))))
-document.body.append($("nav", {}, filter, list),
+const schema = $("a", {href: `#${port}:${token}`, class: "schema"}, "Schema")
+document.body.append($("nav", {}, filter, schema, list),
   head, $("section", {id: "q"}, toggle, steps, sql),
   $("section", {id: "rows"}, status, grid))
 try { view(localStorage.view ?? "steps") } catch { view("steps") }
+
+// the lines between the panes move, and stay where they were put: the
+// list's (in pixels), the head's (a share of the window's height) and the
+// one between the query and the rows (a share of the width beside the list)
+const nav = document.querySelector("nav")
+const clamp = (v, low, high) => Math.min(high, Math.max(low, v))
+const drag = (prop, at, area, row = false) => {
+  const h = $("div", {class: row ? "drag row" : "drag", role: "separator",
+    "aria-orientation": row ? "horizontal" : "vertical",
+    style: `grid-area: ${area}`})
+  const set = v => document.body.style.setProperty(prop, v)
+  try { localStorage[prop] && set(localStorage[prop]) } catch {}
+  h.onpointerdown = e => {
+    e.preventDefault(), h.setPointerCapture(e.pointerId)
+    h.classList.add("on")
+  }
+  h.onpointermove = e => h.hasPointerCapture(e.pointerId) && set(at(e))
+  h.onlostpointercapture = () => {
+    h.classList.remove("on")
+    try { localStorage[prop] = document.body.style.getPropertyValue(prop) }
+    catch {}
+  }
+  return h
+}
+document.body.append(
+  drag("--nav", e => clamp(e.clientX, 120, innerWidth / 2) + "px",
+    "1 / 1 / 3 / 2"),
+  drag("--split", e => clamp((e.clientX - nav.offsetWidth) /
+    (innerWidth - nav.offsetWidth), .15, .85), "2 / 2"),
+  drag("--head", e => clamp(e.clientY / innerHeight * 100, 8, 85) + "vh",
+    "1 / 2 / 2 / 4", true))
 
 filter.oninput = () => {
   const q = filter.value.toLowerCase()
@@ -233,18 +287,16 @@ const phrase = p => p.map(x => typeof x === "string" ? x
   ? $("a", {href: href(byLabel[x.text])}, x.text)
   : $("span", {class: x.kind}, x.text))
 
-// the lineage: the node, every node before it and every node after it, in
-// columns by depth, by schema within a column; a curve from each node to
-// each that reads it
-const lineage = node => {
-  const reach = (from, to) => {
-    const seen = new Set([node.id])
-    for (const id of seen) for (const e of edges)
-      if (e[from] === id && byId[e[to]]) seen.add(e[to])
-    return seen
-  }
-  const ids = new Set([...reach("target", "dep"), ...reach("dep", "target")])
-  const shown = nodes.filter(n => ids.has(n.id))
+// the lineage: nodes in columns by depth, by schema within a column; a
+// curve from each node to each that reads it. a node's is itself, every
+// node before it and every node after it
+const reach = (node, from, to) => {
+  const seen = new Set([node.id])
+  for (const id of seen) for (const e of edges)
+    if (e[from] === id && byId[e[to]]) seen.add(e[to])
+  return seen
+}
+const lineage = (shown, node) => {
   const depths = [...new Set(shown.map(n => n.depth))].sort((a, b) => a - b)
   const cols = depths.map(d => shown.filter(n => n.depth === d)
     .sort((a, b) => order.indexOf(a.schema) - order.indexOf(b.schema) ||
@@ -312,8 +364,17 @@ const rows = async sql => {
 // a node: its head, its lineage, its steps and its sql, and the rows of
 // all of it. a click on a step, or on the sql of its clause, runs the query
 // to it and marks it in both
+// with no node, the schema: the lineage of every node, and its schemas'
+// colours
+const [{dir}] = await all("select parse_filename(getenv('PWD')) dir")
 const open = async node => {
   for (const [n, a] of links) a.classList.toggle("on", n === node)
+  schema.classList.toggle("on", !node)
+  document.body.classList.toggle("all", !node)
+  document.title = [dir, node && label(node)].filter(Boolean).join(" / ")
+  if (!node) return head.replaceChildren($("h1", {}, dir),
+    $("p", {class: "legend"}, order.map(g => $("span",
+      {style: `--c: ${colour(groups[g][0])}`}, g))), lineage(nodes))
   links.get(node).scrollIntoView({block: "nearest"})
   const [lead = "", ...rest] = node.content.match(/^(\s*--.*\n)*/)[0]
     .split(/^\s*--\s*$/m)
@@ -333,7 +394,8 @@ const open = async node => {
     stored && stored.v !== node.content ? $("p", {class: "warn"}, "Its " +
       "table is from an earlier version of its file: make rebuilds it.")
       : null,
-    lineage(node)))
+    lineage(nodes.filter(n => reach(node, "target", "dep").has(n.id) ||
+      reach(node, "dep", "target").has(n.id)), node)))
   const plan = explain(JSON.parse(node.ast).statements[0].node, ref)
   // each step from the first keyword of its clause, as tokens mark it
   const starts = tokens.map(t => t.start)
@@ -365,8 +427,7 @@ const open = async node => {
 }
 
 const route = () => {
-  open(byId[decodeURI(location.hash).split(":").slice(2).join(":")] ??
-    nodes[0])
+  open(byId[decodeURI(location.hash).split(":").slice(2).join(":")])
 }
 onhashchange = route
 route()
