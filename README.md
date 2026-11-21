@@ -98,8 +98,8 @@ want to build neat, reproducible data pipelines that run on a single machine.
 ## How to use it
 
 duckdb.mk is delivered as a single ~350-line file, which is mostly SQL; the
-inspector is two more files that Make fetches when you first use it.
-The recommended way to deploy it is to `include` it in your project's existing
+inspector is one more file, `inspect.html`, that Make fetches when you first
+use it. The recommended way to deploy it is to `include` it in your project's existing
 Makefile, alongside variable definitions and additional targets for things
 DuckDB can't do (e.g. downloading and extracting complex source data). For
 simple projects using only DuckDB features and passing variables at build time,

@@ -1,3 +1,146 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Inspect</title>
+<link rel="icon" href="data:,">
+<style>
+/* the inspector: the models and tests, a node's lineage, its query as steps
+   or as sql, and the rows at the step last clicked */
+:root {
+  --bg: #000; --fg: #fff; --mute: #808080; --line: #262626; --panel: #111;
+  --hi: #00a3a3; --err: #ff6b6b; --name: #98c379; --s: #e6c07b; --n: #d19a66;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace; color-scheme: dark;
+}
+@media (prefers-color-scheme: light) { :root {
+  --bg: #fff; --fg: #111; --mute: #737373; --line: #e5e5e5; --panel: #f5f5f5;
+  --hi: #007a7a; --err: #c62828; --name: #3a7d1c; --s: #8a6100; --n: #b3541e;
+  color-scheme: light;
+} }
+* { box-sizing: border-box; }
+body {
+  margin: 0; height: 100vh; display: grid; background: var(--bg);
+  color: var(--fg); grid: "nav head head" auto "nav q rows" 1fr /
+    var(--nav, 16rem) calc((100vw - var(--nav, 16rem)) * var(--split, .5))
+    minmax(0, 1fr);
+  font: 14px/1.45 system-ui, sans-serif;
+}
+body:not(:has(nav))::after {
+  content: attr(data-msg); margin: auto; color: var(--mute); grid-area: q;
+}
+a { color: inherit; text-underline-offset: .2em; }
+button {
+  font: 12px system-ui; color: var(--mute); background: none; padding: 3px 8px;
+  border: 1px solid var(--line); cursor: pointer;
+}
+button:hover, button[aria-pressed=true] { color: var(--fg); }
+nav {
+  grid-area: nav; overflow: auto; padding: 0 16px 16px;
+  font: 13px/1.6 var(--mono); border-right: 1px solid var(--line);
+}
+nav input {
+  position: sticky; top: 0; width: calc(100% + 32px); margin: 0 -16px;
+  padding: 10px 16px; font: inherit; color: inherit; border: 0;
+  background: var(--panel); outline: none;
+}
+nav h2 { margin: 16px 0 4px; font: 500 11px var(--mono); color: var(--mute); }
+nav a {
+  display: block; text-decoration: none; overflow: hidden;
+  text-overflow: ellipsis;
+}
+nav a::before, .legend span::before { content: "▎"; color: var(--c); }
+nav a.schema { margin-top: 12px; }
+nav a.schema::before { content: none; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font: 12px var(--mono);
+  color: var(--mute); }
+body.all header { grid-row: 1 / -1; max-height: none; border: 0; }
+body.all #q, body.all #rows, body.all .drag:not(:first-of-type) {
+  display: none;
+}
+nav a:hover, nav a.on { color: var(--hi); }
+.off { color: var(--mute); }
+header {
+  grid-area: head; padding: 16px 20px; max-height: var(--head, 50vh);
+  overflow: auto;
+  border-bottom: 1px solid var(--line);
+}
+/* the lines between the panes, to drag */
+.drag {
+  z-index: 1; width: 8px; margin-right: -4px; justify-self: end;
+  cursor: col-resize; touch-action: none;
+}
+.drag.row {
+  width: auto; height: 8px; margin: 0 0 -4px; justify-self: stretch;
+  align-self: end; cursor: row-resize;
+}
+.drag:hover, .drag.on { background: var(--hi); opacity: .5; }
+h1 { margin: 0 0 4px; font: 500 18px var(--mono); }
+header p { margin: 4px 0; max-width: 80ch; }
+header .note, header code { color: var(--mute); }
+header .warn { color: var(--err); }
+code, pre { font: 12.5px/1.5 var(--mono); }
+svg { display: block; margin-top: 12px; font: 12px var(--mono); }
+svg path { fill: none; stroke: var(--mute); opacity: .5; }
+svg rect { fill: var(--panel); stroke: var(--line); }
+svg a:hover rect, svg .on rect { stroke: var(--hi); }
+svg text { fill: var(--fg); }
+svg text.off { fill: var(--mute); }
+#q, #rows { overflow: auto; padding: 16px 20px; }
+#q { grid-area: q; }
+#rows { grid-area: rows; }
+#rows { border-left: 1px solid var(--line); padding-top: 0; }
+.view { margin-bottom: 12px; }
+.view button + button { margin-left: -1px; }
+body[data-view=sql] ol, body:not([data-view=sql]) pre { display: none; }
+ol { margin: 0; padding: 0; list-style: none; max-width: 80ch; }
+ol > li {
+  margin: 0 0 2px calc(var(--d) * 1.2em); padding: 3px 8px; cursor: pointer;
+  border-left: 2px solid var(--line);
+}
+ol > li:hover { border-color: var(--mute); }
+ol > li.on { border-color: var(--hi); background: var(--panel); }
+ol ul { margin: 2px 0 0; padding-left: 1.2em; list-style: none; }
+.name { color: var(--name); }
+.s, .place { color: var(--s); overflow-wrap: anywhere; }
+.n { color: var(--n); }
+pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+pre span { cursor: pointer; }
+pre .on { background: var(--panel); box-shadow: 0 0 0 1px var(--panel); }
+pre .KEYWORD { color: var(--hi); }
+pre .COMMENT { color: var(--mute); }
+pre .STRING_LITERAL { color: var(--s); }
+pre .NUMBER_LITERAL { color: var(--n); }
+.status {
+  position: sticky; top: 0; display: flex; gap: 12px; align-items: center;
+  margin: 0 -20px; padding: 12px 20px; background: var(--bg);
+  color: var(--mute);
+}
+.err { color: var(--err); white-space: pre-wrap; font: 12.5px var(--mono); }
+table { border-collapse: collapse; font: 12.5px var(--mono); }
+th {
+  position: sticky; top: 49px; background: var(--bg); text-align: left;
+  font-weight: 500;
+}
+th small { display: block; color: var(--mute); font-weight: 400; }
+td, th { padding: 3px 12px 3px 0; white-space: nowrap; vertical-align: top; }
+td {
+  border-top: 1px solid var(--line); max-width: 40ch; overflow: hidden;
+  text-overflow: ellipsis;
+}
+td.num { text-align: right; }
+td:empty::after { content: "null"; color: var(--mute); }
+</style>
+<body data-msg="Run make serve to open the inspector.">
+<script type="module">
+// the page is a client of the duckdb that make serve runs, which opens it
+// as #<port>:<token>; :<node> after them names the node in view. duckdb has
+// the plan (in the database plan), a view on each built table and the
+// macros. the page's sections, in order: words; page
+import {QuackClient} from
+  "https://cdn.jsdelivr.net/npm/@quack-protocol/sdk@0.3.0/+esm"
+
+// words -----------------------------------------------------------------------
+
 // sql in plain words: a query's plan, its steps in the order that they run,
 // from the tree that duckdb's json_serialize_sql gives. explain(node, ref)
 // takes a statement's node and ref(name), which gives a model's label for a
@@ -8,7 +151,7 @@
 // of strings and marks, {kind, text}: a model, a name (a table that the plan
 // makes), a place (a file), s a string, n a number. text(phrase) joins it
 
-export const text = p => [].concat(p).map(x => x.text ?? x).join("")
+const text = p => [].concat(p).map(x => x.text ?? x).join("")
 
 // a phrase from a template: its values flattened, empty strings dropped
 const w = (s, ...v) => s.flatMap((t, i) => [t, ...[].concat(v[i] ?? [])])
@@ -353,7 +496,7 @@ const loc = x => typeof x !== "object" || !x ? Infinity : Math.min(
   x.query_location < 1e15 ? x.query_location : Infinity,
   ...Object.values(x).map(loc))
 
-export const explain = (node, ref = () => null) => {
+const explain = (node, ref = () => null) => {
   const c = {ref, made: [], names: new Set, letters: 0, rows: null,
     ctes: []}
   const main = plan(c, node, 0)
@@ -550,3 +693,295 @@ const star = (c, e) => w`every column${e.relation_name
   e.exclude_list.map(x => x.name ?? x.column_names?.join(".") ?? x))}` : ""}${
   e.replace_list?.length ? w`, with ${join(e.replace_list.map(r =>
     w`${r.key}: ${ex(c, r.value)}`))}` : ""}`
+
+// page ------------------------------------------------------------------------
+
+const [port, token] = location.hash.slice(1).split(":")
+// an element, its properties and its children; svg's own by its tags, and
+// svg:a for a link in svg
+const $ = (tag, props = {}, ...kids) => {
+  const e = /^(svg|rect|path|text)$|^svg:/.test(tag) ? document
+    .createElementNS("http://www.w3.org/2000/svg", tag.replace("svg:", ""))
+    : document.createElement(tag)
+  for (const [k, v] of Object.entries(props))
+    typeof v === "function" || typeof v === "boolean" ? e[k] = v
+      : e.setAttribute(k, v)
+  e.append(...kids.flat().filter(k => k != null && k !== false && k !== ""))
+  return e
+}
+const lit = s => `'${String(s).replaceAll("'", "''")}'`
+const say = msg => document.body.dataset.msg = msg
+if (port) say("Connecting…")
+
+// the connection: tried for a few seconds, while duckdb starts
+let db
+for (let n = 0; port && !db; n++) try {
+  db = await QuackClient.connect(`localhost:${port}`,
+    {authToken: token, fetch: (...a) => fetch(...a)})
+} catch (e) {
+  if (n > 20) throw say(`No duckdb at port ${port}: run make serve again.`)
+  await new Promise(r => setTimeout(r, 250))
+}
+const all = async sql => (await db.queryArrow(sql)).toArray()
+  .map(r => ({...r}))
+
+// the nodes: each model and test, its depth (its longest path from a node
+// that reads none of the others) and whether its table is built
+const nodes = await all(`
+  with recursive depth(t, d) using key (t) as (
+    select target, 0 from plan.main.src
+    union
+    select e.target, d.d + 1 from depth d join plan.main.edge e on e.dep = d.t)
+  select s.target id, s.kind, s.schema, s.name, s.file, s.content, s.out,
+    s.ast::varchar ast, d.d::int depth, v.view_name is not null built
+  from plan.main.src s join depth d on d.t = s.target
+  left join duckdb_views() v on v.database_name = 'memory'
+    and v.schema_name = s.schema and v.view_name = s.name
+  order by s.kind, s.schema, s.name`)
+const edges = await all(
+  "select target, dep from plan.main.edge where dep is not null")
+const byId = Object.fromEntries(nodes.map(n => [n.id, n]))
+const label = n => n.kind === "tests" || n.schema === "main" ? n.name
+  : `${n.schema}.${n.name}`
+// a table's name or path, as the sql names it, to the model's label
+const refs = new Map(nodes.filter(n => n.kind === "models").flatMap(n =>
+  [label(n), `${n.schema}.${n.name}`, n.id, n.out].map(k =>
+    [k.toLowerCase(), n])))
+const ref = name => refs.get(name.toLowerCase()) && label(refs.get(name
+  .toLowerCase()))
+const byLabel = Object.fromEntries(nodes.map(n => [label(n), n]))
+const href = n => `#${port}:${token}:${n.id}`
+
+// the schemas, in the graph's order: by their mean depth, tests last; a
+// schema's colour is its place in that order
+const groups = Object.groupBy(nodes, n => n.kind === "tests" ? "tests"
+  : n.schema)
+const mean = ns => ns.reduce((s, n) => s + n.depth, 0) / ns.length
+const order = Object.keys(groups).sort((a, b) => (a === "tests") -
+  (b === "tests") || mean(groups[a]) - mean(groups[b]) || a.localeCompare(b))
+const colour = n => n.kind === "tests" ? "var(--mute)"
+  : `hsl(${order.indexOf(n.schema) * 360 / order.length + 40} 60% 60%)`
+
+// the page: the list, the head, the query (steps or sql) and the rows
+const search = $("input", {type: "search", placeholder: "Filter",
+  "aria-label": "Filter"})
+const links = new Map(nodes.map(n => [n, $("a", {href: href(n),
+  class: n.built || n.kind === "tests" ? "" : "off",
+  style: `--c: ${colour(n)}`}, n.name)]))
+const list = order.map(g => $("section", {}, $("h2", {}, g),
+  groups[g].map(n => links.get(n))))
+const head = $("header"), steps = $("ol"), sql = $("pre")
+const status = $("p", {class: "status"}), grid = $("div")
+const view = v => {
+  document.body.dataset.view = v
+  try { localStorage.view = v } catch {}
+  for (const b of toggle.children) b.ariaPressed = b.value === v
+}
+const toggle = $("div", {class: "view"}, ["steps", "sql"].map(v =>
+  $("button", {value: v, onclick: () => view(v)}, v[0].toUpperCase() +
+    v.slice(1).replace("ql", "QL"))))
+const schema = $("a", {href: `#${port}:${token}`, class: "schema"}, "Schema")
+document.body.append($("nav", {}, search, schema, list),
+  head, $("section", {id: "q"}, toggle, steps, sql),
+  $("section", {id: "rows"}, status, grid))
+try { view(localStorage.view ?? "steps") } catch { view("steps") }
+
+// the lines between the panes move, and stay where they were put: the
+// list's (in pixels), the head's (a share of the window's height) and the
+// one between the query and the rows (a share of the width beside the list)
+const nav = document.querySelector("nav")
+const clamp = (v, low, high) => Math.min(high, Math.max(low, v))
+const drag = (prop, at, area, row = false) => {
+  const h = $("div", {class: row ? "drag row" : "drag", role: "separator",
+    "aria-orientation": row ? "horizontal" : "vertical",
+    style: `grid-area: ${area}`})
+  const set = v => document.body.style.setProperty(prop, v)
+  try { localStorage[prop] && set(localStorage[prop]) } catch {}
+  h.onpointerdown = e => {
+    e.preventDefault(), h.setPointerCapture(e.pointerId)
+    h.classList.add("on")
+  }
+  h.onpointermove = e => h.hasPointerCapture(e.pointerId) && set(at(e))
+  h.onlostpointercapture = () => {
+    h.classList.remove("on")
+    try { localStorage[prop] = document.body.style.getPropertyValue(prop) }
+    catch {}
+  }
+  return h
+}
+document.body.append(
+  drag("--nav", e => clamp(e.clientX, 120, innerWidth / 2) + "px",
+    "1 / 1 / 3 / 2"),
+  drag("--split", e => clamp((e.clientX - nav.offsetWidth) /
+    (innerWidth - nav.offsetWidth), .15, .85), "2 / 2"),
+  drag("--head", e => clamp(e.clientY / innerHeight * 100, 8, 85) + "vh",
+    "1 / 2 / 2 / 4", true))
+
+search.oninput = () => {
+  const q = search.value.toLowerCase()
+  for (const [n, a] of links) a.hidden = !label(n).includes(q)
+  for (const s of list) s.hidden = ![...s.querySelectorAll("a")]
+    .some(a => !a.hidden)
+}
+// j or down opens the next node in the list, k or up the one before
+document.onkeydown = e => {
+  const step = {j: 1, ArrowDown: 1, k: -1, ArrowUp: -1}[e.key]
+  if (!step || e.target === search || e.metaKey || e.ctrlKey) return
+  const shown = [...links.values()].filter(a => !a.hidden)
+  const at = shown.findIndex(a => a.classList.contains("on"))
+  shown[Math.max(0, Math.min(shown.length - 1, at + step))]?.click()
+  e.preventDefault()
+}
+
+// a phrase from words.js: a model linked, a name, a place and a literal
+// set apart
+const phrase = p => p.map(x => typeof x === "string" ? x
+  : x.kind === "model" && byLabel[x.text]
+  ? $("a", {href: href(byLabel[x.text])}, x.text)
+  : $("span", {class: x.kind}, x.text))
+
+// the lineage: nodes in columns by depth, by schema within a column; a
+// curve from each node to each that reads it. a node's is itself, every
+// node before it and every node after it
+const reach = (node, from, to) => {
+  const seen = new Set([node.id])
+  for (const id of seen) for (const e of edges)
+    if (e[from] === id && byId[e[to]]) seen.add(e[to])
+  return seen
+}
+const lineage = (shown, node) => {
+  const depths = [...new Set(shown.map(n => n.depth))].sort((a, b) => a - b)
+  const cols = depths.map(d => shown.filter(n => n.depth === d)
+    .sort((a, b) => order.indexOf(a.schema) - order.indexOf(b.schema) ||
+      label(a).localeCompare(label(b))))
+  const w = 16 + 7.3 * Math.max(...shown.map(n => label(n).length)), h = 22
+  const xy = Object.fromEntries(cols.flatMap((col, x) => col.map((n, y) =>
+    [n.id, [x * (w + 48), y * (h + 8)]])))
+  return $("svg", {width: cols.length * (w + 48) - 48,
+    height: Math.max(...cols.map(c => c.length)) * (h + 8) - 8},
+    edges.filter(e => xy[e.dep] && xy[e.target]).map(e => {
+      const [x0, y0] = xy[e.dep], [x1, y1] = xy[e.target], m = (x0 + w + x1) / 2
+      return $("path", {d: `M${x0 + w} ${y0 + h / 2}C${m} ${y0 + h / 2} ${m
+        } ${y1 + h / 2} ${x1} ${y1 + h / 2}`})
+    }),
+    shown.map(n => $("svg:a", {href: href(n), class: n === node ? "on" : ""},
+      $("rect", {x: xy[n.id][0], y: xy[n.id][1], width: w, height: h}),
+      $("rect", {x: xy[n.id][0], y: xy[n.id][1], width: 3, height: h,
+        style: `fill: ${colour(n)}; stroke: none`}),
+      $("text", {x: xy[n.id][0] + 10, y: xy[n.id][1] + 15,
+        class: n.built || n.kind === "tests" ? "" : "off"}, label(n)))))
+}
+
+// the rows of a query, or of a promise of one: its first ROWS as duckdb
+// writes them, its columns' types, and how long it took; the count only
+// when asked for. an error of a kind in HINTS has its likely cause before it
+const ROWS = 500
+const HINTS = [[/Referenced (table|column)|not found in FROM/, "This part " +
+  "cannot run alone if it uses columns of the query around it."],
+  [/Table with name|does not exist|No files found/, "A table that this " +
+  "reads is not built: make builds it."]]
+let running = 0
+const rows = async sql => {
+  const run = ++running, t = performance.now()
+  status.replaceChildren("Running…")
+  try {
+    const query = await sql
+    const [data, types] = await Promise.all([all(
+      `select columns(*)::varchar from (${query}) limit ${ROWS + 1}`),
+      all(`describe ${query}`)])
+    if (run !== running) return
+    const more = data.length > ROWS, n = types.length
+    const count = $("button", {onclick: async () => {
+      count.replaceWith(`${(await all(`select count(*)::int n from (${query
+        })`))[0].n.toLocaleString()} rows in all`)
+    }}, "Count")
+    status.replaceChildren(`${Math.min(data.length, ROWS).toLocaleString()}${
+      more ? "+" : ""} rows, ${n} column${n === 1 ? "" : "s"} in ${
+      Math.round(performance.now() - t)} ms`, ...more ? [count] : [])
+    const num = types.map(c => /INT|DECIMAL|DOUBLE|FLOAT|REAL/
+      .test(c.column_type))
+    grid.replaceChildren($("table", {}, $("tr", {}, types.map(c => $("th", {},
+      c.column_name, $("small", {}, c.column_type.toLowerCase())))),
+      data.slice(0, ROWS).map(r => $("tr", {}, types.map((c, i) => $("td",
+        {class: num[i] ? "num" : "", title: r[c.column_name] ?? ""},
+        r[c.column_name]))))))
+  } catch (e) {
+    if (run !== running) return
+    const hint = HINTS.find(([re]) => re.test(e.message))?.[1]
+    status.replaceChildren()
+    grid.replaceChildren($("p", {class: "err"}, hint ? `${hint}\n\n` : "",
+      e.message))
+  }
+}
+
+// a node: its head, its lineage, its steps and its sql, and the rows of
+// all of it. a click on a step, or on the sql of its clause, runs the query
+// to it and marks it in both
+// with no node, the schema: the lineage of every node, and its schemas'
+// colours
+const [{dir}] = await all("select parse_filename(getenv('PWD')) dir")
+const open = async node => {
+  for (const [n, a] of links) a.classList.toggle("on", n === node)
+  schema.classList.toggle("on", !node)
+  document.body.classList.toggle("all", !node)
+  document.title = [dir, node && label(node)].filter(Boolean).join(" / ")
+  if (!node) return head.replaceChildren($("h1", {}, dir),
+    $("p", {class: "legend"}, order.map(g => $("span",
+      {style: `--c: ${colour(groups[g][0])}`}, g))), lineage(nodes))
+  links.get(node).scrollIntoView({block: "nearest"})
+  const [lead = "", ...rest] = node.content.match(/^(\s*--.*\n)*/)[0]
+    .split(/^\s*--\s*$/m)
+  const prose = s => s.replace(/^\s*-- ?/gm, "").trim()
+  const [[stored] = [], [{whole}], tokens] = await Promise.all([
+    node.built ? all(`select decode(value) v from parquet_kv_metadata(${
+      lit(node.out)}) where decode(key) = 'sql' limit 1`) : [],
+    all(`select json_deserialize_sql(ast) whole from plan.main.src
+      where target = ${lit(node.id)}`),
+    all(`from sql_tokenize(${lit(node.content)})`)])
+  head.replaceChildren($("div", {}, $("h1", {}, label(node)),
+    prose(lead) && $("p", {}, prose(lead)),
+    rest.length ? $("p", {class: "note"}, prose(rest.join(""))) : null,
+    $("code", {}, node.file),
+    node.kind === "models" && !node.built ? $("p", {class: "warn"},
+      "Not built: make builds its table.") : null,
+    stored && stored.v !== node.content ? $("p", {class: "warn"}, "Its " +
+      "table is from an earlier version of its file: make rebuilds it.")
+      : null,
+    lineage(nodes.filter(n => reach(node, "target", "dep").has(n.id) ||
+      reach(node, "dep", "target").has(n.id)), node)))
+  const plan = explain(JSON.parse(node.ast).statements[0].node, ref)
+  // each step from the first keyword of its clause, as tokens mark it
+  const starts = tokens.map(t => t.start)
+  const at = plan.map(s => {
+    let i = starts.findLastIndex(p => p <= s.at)
+    while (i > 0 && tokens[i - 1].token_type === "KEYWORD") i--
+    return i < 0 ? Infinity : starts[i]
+  })
+  const end = i => Math.min(...at.filter(a => a > at[i]), Infinity)
+  const spans = tokens.map((t, i) => $("span", {class: t.token_type},
+    node.content.slice(t.start, starts[i + 1])))
+  const pick = i => {
+    steps.querySelectorAll(".on").forEach(e => e.classList.remove("on"))
+    sql.querySelectorAll(".on").forEach(e => e.classList.remove("on"))
+    if (i < 0) return rows(whole)
+    steps.children[i].classList.add("on")
+    tokens.forEach((t, k) => t.start >= at[i] && t.start < end(i) &&
+      spans[k].classList.add("on"))
+    rows(all(`select json_deserialize_sql(${lit(plan[i].query)}::json) q`)
+      .then(([{q}]) => q))
+  }
+  steps.replaceChildren(...plan.map((s, i) => $("li", {style: `--d: ${s.depth}`,
+    onclick: () => pick(i)}, phrase(s.text),
+    s.lines && $("ul", {}, s.lines.map(l => $("li", {}, phrase(l)))))))
+  spans.forEach((s, k) => s.onclick = () => pick(at.lastIndexOf(
+    Math.max(...at.filter(a => a <= tokens[k].start)))))
+  sql.replaceChildren(node.content.slice(0, starts[0] ?? Infinity), ...spans)
+  pick(-1)
+}
+
+const route = () => {
+  open(byId[decodeURI(location.hash).split(":").slice(2).join(":")])
+}
+onhashchange = route
+route()
+</script>

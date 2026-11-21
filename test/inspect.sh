@@ -1,10 +1,10 @@
 # the inspector: make serve, a duckdb that the page queries over quack, with
-# the plan, a view on each built table, the macros and words.js; and the
-# steps in words that words.js makes of a query
+# the plan, a view on each built table and the macros; and the steps in words
+# that the page's words section makes of a query
 if [[ $($DUCKDB -init /dev/null -list -noheader -c "select version() >= 'v2'") != true ]]; then
   echo "ok   the inspector needs duckdb 2.0 (skipped)"; return 0
 fi
-cp -R "$here/inspect" . && printf 'export REGION = north\ninclude duckdb.mk\n' > Makefile
+cp "$here/inspect.html" . && printf 'export REGION = north\ninclude duckdb.mk\n' > Makefile
 mkdir -p models/s tests macros data bin && printf 'id,k\n1,a\n2,b\n' > data/x.csv
 echo "-- Rows.
 select *, getenv('REGION') as r from read_csv('data/x.csv')" > models/s/a.sql
@@ -24,25 +24,25 @@ url=$(sed -n 's/^open //p' out) tok=${url##*:}
 sq() {
   $DUCKDB -init /dev/null -list -noheader -c "from quack_query('quack:localhost:$port', \$\$$1\$\$, token := '${2-$tok}')" 2>&1
 }
-is "the url of the page, with duckdb's port" "${url%:*}" "file://$(pwd -P)/inspect/index.html#$port"
+is "the url of the page, with duckdb's port" "${url%:*}" "file://$(pwd -P)/inspect.html#$port"
 is "the plan" "$(sq "select string_agg(target, ' ' order by target) from plan.main.src")" \
   'tables/s/a.parquet tables/top.parquet test/t'
 is "a view on each built table, and the macros" "$(sq "select twice(id) from s.a order by id")" '2
 4'
 is "no view on a table not built" "$(sq "select count(*) from duckdb_views() where view_name = 'top'")" 0
 is "the variables, as make has them" "$(sq "select r from s.a limit 1")" north
-is "words.js" "$(sq "select content like '%export const explain%' from plan.main.words")" true
 is "a wrong token" "$(sq "select 1" wrong | grep -c 'Authentication failed')" 1
 for n in {1..20}; do [[ -s opened ]] && break; sleep 0.1; done
 is "the browser is given the url" "$(cat opened)" "$url"
 exec 3>&-; wait
 is "duckdb stops with its shell" "$(sq "select 1" | grep -c 'Authentication failed\|^1$')" 0
 is "a local copy fetches no page" \
-  "$(rm -r inspect; $MAKE -s DUCKDB="$DUCKDB" serve 2>&1 < /dev/null | grep -c 'put the inspect directory')" 1
+  "$(rm inspect.html; $MAKE -s DUCKDB="$DUCKDB" serve 2>&1 < /dev/null | grep -c 'put inspect.html')" 1
 
-# words.js, by node if there is one: each query's steps, a line each, by
-# depth, with their lines below them
-command -v node > /dev/null || { echo "ok   words.js needs node (skipped)"; return 0; }
+# the page's words section, by node if there is one: each query's steps, a
+# line each, by depth, with their lines below them
+command -v node > /dev/null || { echo "ok   words needs node (skipped)"; return 0; }
+{ sed -n '/^\/\/ words ---/,/^\/\/ page ---/p' "$here/inspect.html"; echo 'export {explain, text}'; } > words.mjs
 cat > q.sql <<'EOF'
 select a, count(*) n, sum(x) filter (where y > 1) t from s.a where a is not null and b in (1, 2) group by a having n > 1 order by n desc limit 5
 with c as (from top where id < 0), d as (select id, max(v) m from c group by all) from d left join c using (id) where m between 1 and 3
@@ -53,7 +53,7 @@ select distinct on (a) a, lag(b) over (order by c) p, sum(b) over () t, avg(b) o
 from s.a semi join top on s.a.id = top.id union all select 1, 2 order by 1
 EOF
 cat > show.mjs <<EOF
-import {explain, text} from "$here/inspect/words.js"
+import {explain, text} from "./words.mjs"
 import {readFileSync} from "fs"
 const ref = n => ({"s.a": "s.a", top: "top", "tables/s/a.parquet": "s.a"})[n.toLowerCase()] ?? null
 for (const {ast} of JSON.parse(readFileSync(0, "utf8")))
@@ -132,7 +132,7 @@ EOF
 )"
 # each step's query, as duckdb gives it back: the sql of its rows
 cat > sql.mjs <<EOF
-import {explain} from "$here/inspect/words.js"
+import {explain} from "./words.mjs"
 import {readFileSync} from "fs"
 for (const {ast} of JSON.parse(readFileSync(0, "utf8")))
   for (const s of explain(ast.statements[0].node)) console.log(JSON.stringify({q: s.query}))

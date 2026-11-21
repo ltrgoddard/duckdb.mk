@@ -14,8 +14,7 @@ src     = $(if $(by),$(@:$(BUILD)/%=models/%@$(by).sql),$<)
 sql     = $$(awk '{s = s $$0 "\n"} END {sub(/[;[:space:]]+$$/, "", s); printf "%s", s}' $(src))
 flags   = $(if $(findstring =,$(firstword $(MAKEFLAGS))),,$(firstword -$(MAKEFLAGS)))
 quiet   = $(findstring s,$(flags))
-page   := $(dir $(self))inspect/index.html
-words  := $(dir $(page))words.js
+page   := $(dir $(self))inspect.html
 commit := $(shell git describe --always --dirty 2>/dev/null)
 recheck = $(if $(filter-out FORCE,$?)$(findstring B,$(flags)),,$(if $($@.sources),$(run),$(db) -c) "$$FRESH" 2>/dev/null ||)
 
@@ -52,17 +51,17 @@ shell serve: export VIEWS = $(foreach m,$(models),$(if $(wildcard $m),$($m.view)
 shell:
 	@$(DUCKDB) $(macros:%=-cmd '.read %') -cmd "$$VIEWS"
 
-serve: $(page) $(words)
+serve: $(page)
 	@t=$$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n'); u="file://$(abspath $(page))#$(PORT):$$t"; \
 	  { sleep 1; xdg-open "$$u" || echo "$$BROWSE" | osascript - "$$u"; } >/dev/null 2>&1 & \
 	  $(DUCKDB) $(macros:%=-cmd '.read %') -cmd '.output /dev/null' -cmd "attach ':memory:' as plan; use plan" \
-	  -cmd "$$PLAN" -cmd "use memory; create view plan.main.words as from read_text('$(words)'); $$VIEWS" \
+	  -cmd "$$PLAN" -cmd "use memory; $$VIEWS" \
 	  -cmd "from quack_serve('quack:localhost:$(PORT)', token := '$$t')" -cmd '.output' \
 	  -cmd ".print open $$u"
 
-$(page) $(words):
-	$(if $(DUCKDB_MK),curl -sSfL --create-dirs -o $@ https://raw.githubusercontent.com/ltrgoddard/duckdb.mk/$(DUCKDB_MK)/inspect/$(@F),\
-	  $(error put the inspect directory of duckdb.mk beside $(self)))
+$(page):
+	$(if $(DUCKDB_MK),curl -sSfL --create-dirs -o $@ https://raw.githubusercontent.com/ltrgoddard/duckdb.mk/$(DUCKDB_MK)/$(@F),\
+	  $(error put inspect.html from duckdb.mk beside $(self)))
 
 define PLAN
 create table src as

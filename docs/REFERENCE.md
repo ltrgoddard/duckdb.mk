@@ -239,26 +239,23 @@ A local copy also works: `include duckdb.mk`.
 
 `make serve` shows the project as a page: its models and tests, their
 dependencies as the plan has them, and each query as steps in plain words.
-It needs DuckDB 2.0 or later. Make fetches the page's two files,
-`inspect/index.html` and `inspect/words.js`, at the version in `DUCKDB_MK`,
-the first time. With a local copy of `duckdb.mk` and no `DUCKDB_MK`, put the
-repository's `inspect/` directory beside it: Make fetches nothing, and stops
-if it is not there.
+It needs DuckDB 2.0 or later. Make fetches the page, one HTML file,
+`inspect.html`, at the version in `DUCKDB_MK`, the first time. With a local
+copy of `duckdb.mk` and no `DUCKDB_MK`, put the repository's `inspect.html`
+beside it: Make fetches nothing, and stops if it is not there.
 
 `make serve` starts DuckDB with the macros, a view of each built model (as
 `make shell` does) and the plan, in a database named `plan`. DuckDB serves
 them on `localhost:$(PORT)` over its
 [Quack](https://duckdb.org/docs/current/quack/overview) protocol, with a
 random token for each run. Make then opens the page in the default browser
-as `file://.../inspect/index.html#<port>:<token>`, and prints that address
+as `file://.../inspect.html#<port>:<token>`, and prints that address
 in case the browser does not open it. The terminal shows DuckDB's shell,
 which shares the page's database. Quit the shell to stop the inspector.
 
 The page does not change: it reads the port and the token from its address.
 It loads the [Quack client](https://github.com/tobilg/quack-protocol) from
-jsDelivr, so the first load needs a network connection. It loads `words.js`
-through DuckDB, as a page opened from a file cannot read the files beside
-it. On macOS, Make sends the address to the browser with AppleScript, as
+jsDelivr, so the first load needs a network connection. On macOS, Make sends the address to the browser with AppleScript, as
 `open` drops the part after `#` from a file's address.
 
 The page builds no model. Each query runs in DuckDB, with its extensions, its
@@ -269,7 +266,7 @@ built, and its SQL and steps can still be read.
   `--` separates a note from it.
 - A query shows as steps in words or as its SQL, as last chosen. A click on
   a step or a clause runs the query to it and marks it in both. Each step's
-  SQL is DuckDB's own: `words.js` cuts the query's syntax tree from
+  SQL is DuckDB's own: the page cuts the query's syntax tree from
   `json_serialize_sql` after the step, and `json_deserialize_sql` gives it
   back as SQL.
 - A test shows the rows that fail it.
@@ -277,11 +274,6 @@ built, and its SQL and steps can still be read.
   rebuild it when it is opened: its rows are from the earlier version.
 - A step that reads a query around it (a correlated subquery, a `lateral`)
   cannot run alone, and says so.
-
-`words.js` is an ES module with no dependencies. `explain(node, ref)` takes a
-statement's node from `json_serialize_sql` and returns its steps, and
-`text(phrase)` joins a step's phrase as text. See the comment at the top of
-the file.
 
 ## Steps that DuckDB cannot do
 
