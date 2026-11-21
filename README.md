@@ -22,7 +22,7 @@ interface.
 ![The inspector: a model's lineage, its query as steps in words, and its rows](docs/inspect.png)
 
 *A [Data Desk](https://datadesk.eco) project built with duckdb.mk, viewed
-with `make serve`*
+with `make inspect`*
 
 ## Compared with other tools
 
@@ -126,11 +126,11 @@ flowchart.
 
 ## Inspector
 
-`make serve` opens a page that lists every model and test, draws the
+`make inspect` opens a page that lists every model and test, draws the
 dependency graph from the plan, and shows each model's SQL as steps in plain
 words. A click on a step or a clause runs the query up to that point against
 the tables as Make last built them. The page is a static file. The queries
-run in the DuckDB that `make serve` starts, which the page reaches over
+run in the DuckDB that `make inspect` starts, which the page reaches over
 DuckDB's [Quack](https://duckdb.org/docs/current/quack/overview) protocol.
 See [docs/REFERENCE.md](docs/REFERENCE.md#inspector).
 

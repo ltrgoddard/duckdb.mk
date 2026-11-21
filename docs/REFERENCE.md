@@ -40,7 +40,7 @@ rebuild a model: run `make -B` on the models it applies to.
 | `test`                   | Build the models that tests need, then run all tests |
 | `test/<path>`            | Run one test                                         |
 | `shell`                  | Open DuckDB with the macros and a view of each built model; build nothing |
-| `serve`                  | Open the inspector, with the shell of `shell`; build nothing |
+| `inspect`                | Open the inspector, with the shell of `shell`; build nothing |
 | `clean`                  | Remove `$(BUILD)`                                    |
 
 Standard Make flags apply: `-j` builds in parallel, and `-s` hides row counts
@@ -237,14 +237,14 @@ A local copy also works: `include duckdb.mk`.
 
 ## Inspector
 
-`make serve` shows the project as a page: its models and tests, their
+`make inspect` shows the project as a page: its models and tests, their
 dependencies as the plan has them, and each query as steps in plain words.
 It needs DuckDB 2.0 or later. Make fetches the page, one HTML file,
 `inspect.html`, at the version in `DUCKDB_MK`, the first time. With a local
 copy of `duckdb.mk` and no `DUCKDB_MK`, put the repository's `inspect.html`
 beside it: Make fetches nothing, and stops if it is not there.
 
-`make serve` starts DuckDB with the macros, a view of each built model (as
+`make inspect` starts DuckDB with the macros, a view of each built model (as
 `make shell` does) and the plan, in a database named `plan`. DuckDB serves
 them on `localhost:$(PORT)` over its
 [Quack](https://duckdb.org/docs/current/quack/overview) protocol, with a

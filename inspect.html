@@ -25,9 +25,8 @@ body {
     minmax(0, 1fr);
   font: 14px/1.45 system-ui, sans-serif;
 }
-body:not(:has(nav))::after {
-  content: attr(data-msg); margin: auto; color: var(--mute); grid-area: q;
-}
+/* until the page is ready, a line that says why it is not */
+.msg { grid-area: 1 / 1 / -1 / -1; place-self: center; color: var(--mute); }
 a { color: inherit; text-underline-offset: .2em; }
 button {
   font: 12px system-ui; color: var(--mute); background: none; padding: 3px 8px;
@@ -143,9 +142,10 @@ td:empty::after { content: "null"; color: var(--mute); }
   .drag { display: none; }
 }
 </style>
-<body data-msg="Run make serve to open the inspector.">
+<body>
+<p class="msg">Run <code>make inspect</code> to open the inspector.</p>
 <script type="module">
-// the page is a client of the duckdb that make serve runs, which opens it
+// the page is a client of the duckdb that make inspect runs, which opens it
 // as #<port>:<token>; :<node> after them names the node in view. duckdb has
 // the plan (in the database plan), a view on each built table and the
 // macros. the page's sections, in order: words; page
@@ -723,7 +723,8 @@ const $ = (tag, props = {}, ...kids) => {
   return e
 }
 const lit = s => `'${String(s).replaceAll("'", "''")}'`
-const say = msg => document.body.dataset.msg = msg
+const msg = document.querySelector(".msg")
+const say = (...parts) => msg.replaceChildren(...parts)
 if (port) say("Connecting…")
 
 // the connection: tried for a few seconds, while duckdb starts
@@ -732,7 +733,8 @@ for (let n = 0; port && !db; n++) try {
   db = await QuackClient.connect(`localhost:${port}`,
     {authToken: token, fetch: (...a) => fetch(...a)})
 } catch (e) {
-  if (n > 20) throw say(`No duckdb at port ${port}: run make serve again.`)
+  if (n > 20) throw say(`No duckdb at port ${port}: run `,
+    $("code", {}, "make inspect"), " again.")
   await new Promise(r => setTimeout(r, 250))
 }
 const all = async sql => (await db.queryArrow(sql)).toArray()
@@ -794,6 +796,7 @@ const toggle = $("div", {class: "view"}, ["steps", "sql"].map(v =>
   $("button", {value: v, onclick: () => view(v)}, v[0].toUpperCase() +
     v.slice(1).replace("ql", "QL"))))
 const schema = $("a", {href: `#${port}:${token}`, class: "schema"}, "Schema")
+msg.remove()
 document.body.append($("nav", {}, search, schema, list),
   head, $("section", {id: "q"}, toggle, steps, sql),
   $("section", {id: "rows"}, status, grid))

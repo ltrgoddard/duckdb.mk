@@ -20,7 +20,7 @@ recheck = $(if $(filter-out FORCE,$?)$(findstring B,$(flags)),,$(if $($@.sources
 
 all:
 clean: ; rm -rf $(BUILD)
-.PHONY: all test shell serve clean FORCE
+.PHONY: all test shell inspect clean FORCE
 .DELETE_ON_ERROR:
 
 ifneq ($(filter-out clean,$(or $(MAKECMDGOALS),all)),)
@@ -47,11 +47,11 @@ $(filter-out %.parquet,$(models)): $(wildcard macros) $(macros)
 $(tests): test/%: tests/%.sql $(macros)
 	@$(run) "$$PRELUDE" -c "$$ASSERT ($(sql)$$PASS"
 
-shell serve: export VIEWS = $(foreach m,$(models),$(if $(wildcard $m),$($m.view)))
+shell inspect: export VIEWS = $(foreach m,$(models),$(if $(wildcard $m),$($m.view)))
 shell:
 	@$(DUCKDB) $(macros:%=-cmd '.read %') -cmd "$$VIEWS"
 
-serve: $(page)
+inspect: $(page)
 	@t=$$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n'); u="file://$(abspath $(page))#$(PORT):$$t"; \
 	  { sleep 1; xdg-open "$$u" || echo "$$BROWSE" | osascript - "$$u"; } >/dev/null 2>&1 & \
 	  $(DUCKDB) $(macros:%=-cmd '.read %') -cmd '.output /dev/null' -cmd "attach ':memory:' as plan; use plan" \

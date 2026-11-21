@@ -23,7 +23,7 @@ A project uses three tools: DuckDB for every transformation, Make for order
 and rebuilds, and git for history. Keep to them. Do not add Python, dbt or a
 scheduler for work that a model or a Make rule can do.
 
-Someone will review your pipeline in the inspector (`make serve`), which shows
+Someone will review your pipeline in the inspector (`make inspect`), which shows
 each query as steps and runs each step. Write so that the
 review is easy: small models, literal source paths, a description on every
 model and a test for every assumption.
@@ -244,7 +244,7 @@ Follow these steps after every change:
 4. **Check what built a table.** Each table stores the SQL that built it and
    the git commit:
    `duckdb -c "select decode(key), decode(value) from parquet_kv_metadata('tables/x.parquet')"`.
-5. **Hand over for review.** Tell the user to run `make serve`. Mention any
+5. **Hand over for review.** Tell the user to run `make inspect`. Mention any
    model or test that you could not build, and why.
 
 To rebuild one table, `touch` its model's file and run `make`.

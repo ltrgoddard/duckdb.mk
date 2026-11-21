@@ -1,4 +1,4 @@
-# the inspector: make serve, a duckdb that the page queries over quack, with
+# the inspector: make inspect, a duckdb that the page queries over quack, with
 # the plan, a view on each built table and the macros; and the steps in words
 # that the page's words section makes of a query
 if [[ $($DUCKDB -init /dev/null -list -noheader -c "select version() >= 'v2'") != true ]]; then
@@ -13,11 +13,11 @@ echo "from top where id < 0" > tests/t.sql
 echo "create macro twice(x) as x * 2;" > macros/m.sql
 $MAKE -s DUCKDB="$DUCKDB" tables/s/a.parquet > /dev/null
 
-# serve on a free port, with stdin held open for duckdb's shell, and a
+# the inspector on a free port, with stdin held open for duckdb's shell, and a
 # browser that notes the url that it is given
 printf '#!/bin/sh\necho "$1" > opened\n' > bin/xdg-open && chmod +x bin/xdg-open
 port=$((20000 + RANDOM % 20000)) && mkfifo in
-PATH=$PWD/bin:$PATH $MAKE -s DUCKDB="$DUCKDB" PORT=$port serve < in > out 2>&1 &
+PATH=$PWD/bin:$PATH $MAKE -s DUCKDB="$DUCKDB" PORT=$port inspect < in > out 2>&1 &
 exec 3> in
 for n in {1..100}; do grep -q '^open ' out && break; sleep 0.1; done
 url=$(sed -n 's/^open //p' out) tok=${url##*:}
@@ -37,7 +37,7 @@ is "the browser is given the url" "$(cat opened)" "$url"
 exec 3>&-; wait
 is "duckdb stops with its shell" "$(sq "select 1" | grep -c 'Authentication failed\|^1$')" 0
 is "a local copy fetches no page" \
-  "$(rm inspect.html; $MAKE -s DUCKDB="$DUCKDB" serve 2>&1 < /dev/null | grep -c 'put inspect.html')" 1
+  "$(rm inspect.html; $MAKE -s DUCKDB="$DUCKDB" inspect 2>&1 < /dev/null | grep -c 'put inspect.html')" 1
 
 # the page's words section, by node if there is one: each query's steps, a
 # line each, by depth, with their lines below them
