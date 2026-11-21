@@ -15,36 +15,23 @@ external sources, e.g. for research or analytical dashboards. duckdb.mk is a
 formalisation of an *ad hoc* approach that I've developed over many years of
 working on data journalism and research projects at NGOs.
 
-See [`example/`](example/) for a duckdb.mk project that analyses methane
-emissions using public data and [docs/REFERENCE.md](docs/REFERENCE.md) for the full
-interface.
+The build tool is one Makefile, mostly written in SQL. The inspector is one
+HTML file, fetched when you run `make inspect`. Include the Makefile in your
+project to build the tables; open the inspector to follow their dependencies,
+inspect intermediate results and try changes to the queries.
 
 ![The inspector: a model's lineage, its query as steps in words, and its rows](docs/inspect.png)
 
 *A [Data Desk](https://datadesk.eco) project built with duckdb.mk, viewed
 with `make inspect`*
 
-## Compared with other tools
-
-- [dbt](https://www.getdbt.com/) with
-  [dbt-duckdb](https://github.com/duckdb/dbt-duckdb): a Python install, project
-  and profile configuration, and `ref()` in each query. It has many more
-  features, such as incremental models, snapshots and generated documentation.
-- [SQLMesh](https://github.com/SQLMesh/sqlmesh): also infers dependencies
-  from SQL, and adds plans, virtual environments and column-level lineage. It
-  is a larger Python framework.
-- A hand-written Makefile: works well, but you maintain each dependency by
-  hand. duckdb.mk generates those rules from the SQL.
-
 ## Quick start
 
 You need [DuckDB](https://duckdb.org) 1.4.1 or later, GNU Make 3.81 or later
-(the version that ships with macOS works) and `curl`.
+and `curl`. The inspector needs DuckDB 2.0 or later.
 
-Include this snippet at the top of your Makefile to install duckdb.mk v0.3.0
-on next build; set `DUCKDB_MK` to a newer tag, or `main`, to upgrade. Then
-write a `SELECT` query as a .sql file under `models/` and run `make` to
-generate a table.
+Put this at the top of your project's Makefile to install duckdb.mk v0.3.0
+on the next build:
 
 ```make
 DUCKDB_MK = v0.3.0
@@ -54,9 +41,7 @@ include .duckdb.mk/$(DUCKDB_MK)/duckdb.mk
 	  https://raw.githubusercontent.com/ltrgoddard/duckdb.mk/$*/duckdb.mk
 ```
 
-### Example
-
-Two models, one referring to the other by name:
+Write a query in each of two files, with one referring to the other by name:
 
 ```sql
 -- models/staging/orders.sql
@@ -68,6 +53,8 @@ from staging.orders
 group by customer
 ```
 
+With your source data in `data/orders.csv`, run `make`:
+
 ```console
 $ make
 tables/staging/orders.parquet: 3 rows
@@ -76,90 +63,77 @@ $ make
 make: Nothing to be done for `all'.
 ```
 
-## How it works
+The everyday commands are:
 
-duckdb.mk implements the four features that represent 99% of my own dbt use:
+```sh
+make          # build the tables
+make test     # run SQL tests
+make shell    # query the built tables in DuckDB
+make inspect  # explore the project in the browser
+```
 
-- Individual `SELECT` queries map one-to-one to output tables
-- A query in one file can refer to the output table from another
-- Tables are rebuilt like Make targets, including their dependencies
-- Settings can be controlled through project-level variables
+See [`example/`](example/) for a complete project analysing methane emissions
+from public data.
 
-Unlike dbt, duckdb.mk requires no configuration or hand-maintained metadata:
-table and schema names are derived from filenames and directories, while
-internal references are resolved automatically (no need for dbt's
-`ref("model")`).
+## Build tool
 
-This project does not aim to implement the 'full fat' features of dbt like
-incremental rebuilds, automated documentation and tight integration with remote
-data warehouses. It's aimed at individual data engineers and small teams who
-want to build neat, reproducible data pipelines that run on a single machine.
+Each file in `models/` contains one `SELECT` query and builds a Parquet table
+in `tables/`. Schema and table names come from paths:
+`models/staging/orders.sql` becomes `staging.orders`. Queries refer to other
+models by name, with no `ref()` or separate dependency declarations.
 
-## How to use it
+- **Dependencies come from the SQL.** DuckDB parses the queries; duckdb.mk
+  finds the models, source files, URLs and environment variables they read.
+- **Make decides what to rebuild.** Local files use modification times;
+  remote sources, globs and environment variables are checked for changes.
+  Use `make -j` to build independent tables in parallel, and add your own
+  Make rules for downloading, extracting or processing inputs.
+- **Tests are queries too.** A query in `tests/` passes if it returns no
+  rows. A failure prints example rows and stops the build. Shared macros
+  and extension setup go in `macros/`.
+- **Outputs record how they were built.** Each Parquet table stores its SQL
+  and Git revision. A failed build leaves the previous output in place.
 
-duckdb.mk is delivered as a single ~350-line file, which is mostly SQL; the
-inspector is one more file, `inspect.html`, that Make fetches when you first
-use it. The recommended way to deploy it is to `include` it in your project's existing
-Makefile, alongside variable definitions and additional targets for things
-DuckDB can't do (e.g. downloading and extracting complex source data). For
-simple projects using only DuckDB features and passing variables at build time,
-the file can be renamed to `Makefile` and used directly.
-
-SQL queries representing tables are stored in a `models/` directory, with
-subdirectories representing (and naming) schemas. Each table definition is a
-.sql file containing a single `SELECT` statement, which can refer freely to
-other schemas and tables in the collection by name. A file named
-`table@column.sql` builds a directory with one Parquet file for each value of
-that column, and keeps the name `table`.
-
-Tests are stored in `tests/` and macros -- SQL run before every model statement
--- in `macros/`. Built Parquet tables are stored in `tables/` organised by
-schema. `data/` is conventionally used for downloaded source data, but this
-location is optional and sources are often remote.
-
-Build tables in the normal Make way, by running `make
-tables/schema/table.parquet`. duckdb.mk will take care of dependencies,
-including checking modification dates of local and remote resources to save on
-full rebuilds and ensure fresh data when needed. Each run also writes the
-dependency graph to `tables/dag.mmd` as a [Mermaid](https://mermaid.js.org)
-flowchart.
+See the [reference](docs/REFERENCE.md) for targets, variables, partitioned
+models and the exact dependency and rebuild rules.
 
 ## Inspector
 
-`make inspect` opens a page that lists every model and test, draws the
-dependency graph from the plan, and shows each model's SQL as steps in plain
-words. A click on a step or a clause runs the query up to that point against
-the tables as Make last built them. The SQL can be changed in the page and
-run, and the nodes after it then show their rows with the change; nothing is
-saved. The page is a static file. The queries run in the DuckDB that
-`make inspect` starts, which the page reaches over DuckDB's
-[Quack](https://duckdb.org/docs/current/quack/overview) protocol.
-See [docs/REFERENCE.md](docs/REFERENCE.md#inspector).
+`make inspect` opens the project's dependency graph and connects the page to
+local DuckDB. Queries run against the tables as Make last built them;
+opening the inspector does not build anything.
 
-## Agent skill
+- **Follow a table back to its sources.** Browse models and tests, their
+  SQL, and the dependencies between them. Leading SQL comments provide
+  model descriptions.
+- **Look inside a query.** Switch between SQL and readable steps derived
+  from DuckDB's parsed query. Click a step or clause to see the rows at
+  that point.
+- **Try a change.** Edit SQL and run it to recompute the model and downstream
+  models that refer to it by name. Inspect their rows and any test failures.
+- **Keep experiments in the session.** Edits survive a page reload, but
+  leave source files and built tables unchanged. Revert an edit to return
+  to the file's SQL; stopping the inspector discards the session.
 
-[`docs/SKILL.md`](docs/SKILL.md) tells a coding agent
-how to build, test and hand over a duckdb.mk project. To install it for
-Claude Code in a project:
+The page is a single `inspect.html` file. It uses DuckDB's
+[Quack](https://duckdb.org/docs/current/quack/overview) protocol to query the
+local process, with the project's macros and extensions available.
+See [using the inspector](docs/REFERENCE.md#inspector) for controls and limits.
 
-```sh
-curl -sSfL --create-dirs -o .claude/skills/duckdb-mk/SKILL.md \
-  https://raw.githubusercontent.com/ltrgoddard/duckdb.mk/main/docs/SKILL.md
-```
+## Scope
 
-## Development
+duckdb.mk is intended for individual researchers and small teams building
+pipelines on one machine. It rebuilds whole tables; it does not provide
+incremental models, snapshots or warehouse deployment.
 
-The `Makefile` at the root is for work on duckdb.mk itself. `make test` runs
-the end-to-end tests in `test/` in parallel against real `make` and `duckdb`
-executables (set `MAKE` and `DUCKDB` to try others, and `S` to name suites).
-They cover rebuilds, dependency resolution, errors, partitioned models, the
-inspector's files, remote sources over HTTP and S3, a pipeline over millions
-of generated rows and a random 300-model project checked against an
-independent model of its dependency graph. `make bench` times the working
-copy against earlier versions (`REFS` names them). `make release V=v1.2.3`
-names the version in the docs, commits, tags and pushes. The example in
-`example/` includes the checkout's `duckdb.mk`, so it runs the code as it
-is.
+## Further reading
 
-Contributions -- bug fixes, ergonomics, new features -- are encouraged. Please
-file an issue in the first instance.
+- [Reference](docs/REFERENCE.md): project layout, commands and build rules.
+- [Recipes](docs/RECIPES.md): external runs and processing steps between models.
+- [Agent skill](docs/SKILL.md): instructions for coding agents working on a
+  duckdb.mk project; [installation](docs/REFERENCE.md#agent-skill).
+
+## Contributing
+
+Bug reports, fixes and suggestions are welcome. Please file an issue first.
+See [development](docs/DEVELOPMENT.md) for tests, benchmarks and releases.

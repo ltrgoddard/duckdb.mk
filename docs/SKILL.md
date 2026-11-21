@@ -1,11 +1,8 @@
 ---
 name: duckdb-mk
-description: Build, change and verify data pipelines made with duckdb.mk, a
-  Makefile that turns a directory of DuckDB SELECT queries into Parquet
-  tables. Use this skill whenever a project's Makefile includes duckdb.mk or
-  has a models/ directory of .sql files, and whenever the user asks for a
-  local, reproducible DuckDB pipeline, an ETL or a dbt-style project without
-  dbt, even if duckdb.mk is not named.
+description: Build, change and verify DuckDB pipelines using duckdb.mk.
+  Use for projects whose Makefile includes duckdb.mk, or when the user
+  asks to set up a duckdb.mk project.
 ---
 
 # duckdb.mk pipelines
@@ -19,14 +16,13 @@ tables, files, URLs and environment variables that it reads, and gives Make
 the dependency graph. There is no configuration file and no `ref()`: a query
 refers to another model by its name.
 
-A project uses three tools: DuckDB for every transformation, Make for order
-and rebuilds, and git for history. Keep to them. Do not add Python, dbt or a
-scheduler for work that a model or a Make rule can do.
+Use SQL models for transformations and Make rules for other processing.
+Follow the project's existing tools and conventions; avoid adding a framework
+for work that DuckDB and Make already handle.
 
-Someone will review your pipeline in the inspector (`make inspect`), which shows
-each query as steps and runs each step. Write so that the
-review is easy: small models, literal source paths, a description on every
-model and a test for every assumption.
+The inspector (`make inspect`) shows queries as steps and lets a reviewer
+inspect intermediate results. Small models, literal source paths and leading
+SQL comments make that review easier.
 
 ## Before you start
 
@@ -35,7 +31,7 @@ model and a test for every assumption.
    `https://raw.githubusercontent.com/ltrgoddard/duckdb.mk/<DUCKDB_MK>/docs/REFERENCE.md`
    (at the top of the repository up to v0.2.0).
    Read it when this skill does not answer a question.
-2. Check the DuckDB version with `duckdb --version`. duckdb.mk needs 1.4 or
+2. Check the DuckDB version with `duckdb --version`. duckdb.mk needs 1.4.1 or
    later. DuckDB 2.0 rejects `x -> x + 1` lambdas by default; write
    `lambda x: x + 1`, which works from 1.4. When an agent runs it, DuckDB 2.0
    prints a notice and gives errors as JSON: add `-no-agent` to your own
@@ -82,11 +78,12 @@ data/plants.csv:
 ```
 
 Use the latest tag from the releases page unless the user names a version.
-The SQL and commit stored in each table need v0.3.0 or later. The
-inspector needs a later version, and DuckDB 2.0 or later.
+The SQL and commit stored in each table need v0.3.0 or later. The inspector
+needs DuckDB 2.0 or later; consult the pinned version's reference for its
+inspector interface.
 Define extra targets after the `include`, so that `all` stays the default.
 
-## Write models
+## Model constraints
 
 **Write exactly one `SELECT` statement in each file.** The plan rejects
 `CREATE`, `INSERT`, `SET` and more than one statement. When you split a
@@ -100,10 +97,35 @@ pivot generation on fuel in ('gas', 'coal') using sum(mwh) group by plant
 ```
 
 **Refer to other models by name.** Write `from census.counties`, or
-`from matches` for a model in `main`. The plan stops at a name in a schema of
-models that is no model (`no model census.countys`). duckdb.mk resolves the name to the
-model's table and makes it a dependency. A CTE with the same name hides the
+`from matches` for a model in `main`. A misspelled table in a model schema
+stops the plan (`no model census.countys`). The reference creates a
+dependency on that model. A CTE with the same name hides the
 model inside its scope, as in DuckDB.
+
+**Use source paths that can be tracked.** duckdb.mk finds a source only where DuckDB
+reads a string as one: a table name (`from 'data/x.csv'`) or an argument of a
+table function (`read_csv('data/*.csv')`, `read_parquet(['a', 'b'])`). A path
+built at run time, such as `'data/' || year || '.csv'`, is not a dependency,
+is not checked for changes and is not shown in the inspector. When a path
+must change, put the changing part in an environment variable, first, with
+the rest after it as one literal: `read_csv(getenv('RAW') || '/x.csv')`.
+duckdb.mk then checks that file as well as the variable.
+
+**Use a suffix for partitioned models.** `models/eog/detections@cell.sql`
+builds one file for each value of `cell` under `tables/eog/detections/` and
+keeps the name `eog.detections`. A partitioned model that returns no rows
+fails.
+
+**Keep macros small.** Every file in `macros/` runs before every model and
+test, and a change to one rebuilds everything. Use macros for shared
+functions (`create macro`) and for `install` and `load` of extensions. A
+macro cannot read a model: DuckDB 2.0 looks up a macro's tables when it
+creates the macro, before any model has a view. Join the table in the model,
+or give a table macro the table's name (see the tests below).
+
+## Conventions for reviewable models
+
+Use these as defaults, following the project's needs and existing style.
 
 **Start every model with a description.** The leading `--` comment is the
 model's description in the inspector. A line that holds only `--` separates
@@ -116,26 +138,15 @@ a longer note from it:
 select ...
 ```
 
-**Name every source literally.** duckdb.mk finds a source only where DuckDB
-reads a string as one: a table name (`from 'data/x.csv'`) or an argument of a
-table function (`read_csv('data/*.csv')`, `read_parquet(['a', 'b'])`). A path
-built at run time, such as `'data/' || year || '.csv'`, is not a dependency,
-is not checked for changes and is not shown in the inspector. When a path
-must change, put the changing part in an environment variable, first, with
-the rest after it as one literal: `read_csv(getenv('RAW') || '/x.csv')`.
-duckdb.mk then checks that file as well as the variable.
-
 **Keep models small and named for what they hold.** Give a table its own model
 when a reviewer would want to see its rows: a cleaned source, a join, an
 aggregate. Use CTEs for short local steps inside one model. A chain of many
 CTEs is harder to review than two or three models.
 
-**Fetch external data in a model of its own.** A model that reads a remote
-source (`read_csv('https://...')`, `read_parquet('s3://...')`) must not read
-another model: no join to one and no filter by one. Join the fetched table in
-a later model. A model that reads another model is rebuilt when that model
-changes, and the inspector computes it again when that model is edited
-there. If it also fetches, each of those is a new download.
+**Fetch remote data in a separate model where practical.** Joining remote
+sources directly to other models is supported, but each rebuild or inspector
+edit may fetch the data again. A separate source model lets downstream
+queries reuse the built table.
 
 **Select columns explicitly in final tables.** `select *` passes upstream
 changes through silently. Name the columns that a published table promises.
@@ -144,22 +155,10 @@ changes through silently. Name the columns that a published table promises.
 an error. Use `cast` where bad input should stop the build. Where `try_cast`
 is necessary, add a test that counts the values it lost.
 
-**Partition large tables with a suffix.** `models/eog/detections@cell.sql`
-builds one file for each value of `cell` under `tables/eog/detections/` and
-keeps the name `eog.detections`. A partitioned model that returns no rows
-fails.
-
 **Give an order where the result depends on it.** Each table is a file that
 DuckDB reads with several threads, so rows have no fixed order between
 builds. Write the `order by` in `row_number() over (...)`, `first(x order
 by ...)`, `list(x order by ...)` and before a `limit`.
-
-**Keep macros small.** Every file in `macros/` runs before every model and
-test, and a change to one rebuilds everything. Use macros for shared
-functions (`create macro`) and for `install` and `load` of extensions. A
-macro cannot read a model: DuckDB 2.0 looks up a macro's tables when it
-creates the macro, before any model has a view. Join the table in the model,
-or give a table macro the table's name (see the tests below).
 
 ## Write tests
 
@@ -236,12 +235,13 @@ environment and create DuckDB secrets from them in a macro if needed.
 
 ## Build and verify
 
-Follow these steps after every change:
+After changing a pipeline, build and test the affected models, inspect the
+results and report what was verified:
 
 1. **Build.** Run `make`. Each table prints `<target>: <n> rows`. Compare
-   each count with what you expect. A count that grows after a join usually
-   means a key that is not unique; a count of zero or one usually means a
-   wrong filter or join condition.
+   each count with the intended grain and filters. Unexpected growth after
+   a join can reveal duplicate keys; an unexpectedly empty result can reveal
+   a bad filter or join condition.
 2. **Test.** Run `make test`. A failing test prints its row count and three
    example rows, and stops.
 3. **Look at the rows.** Query a table directly:
@@ -251,8 +251,9 @@ Follow these steps after every change:
 4. **Check what built a table.** Each table stores the SQL that built it and
    the git commit:
    `duckdb -c "select decode(key), decode(value) from parquet_kv_metadata('tables/x.parquet')"`.
-5. **Hand over for review.** Tell the user to run `make inspect`. Mention any
-   model or test that you could not build, and why.
+5. **Hand over for review.** Name the changed models and relevant results.
+   Point to useful steps in `make inspect`, and mention anything you could
+   not build or test.
 
 To rebuild one table, `touch` its model's file and run `make`.
 `make -B` rebuilds a target and everything it depends on.
