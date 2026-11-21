@@ -130,6 +130,13 @@ when a reviewer would want to see its rows: a cleaned source, a join, an
 aggregate. Use CTEs for short local steps inside one model. A chain of many
 CTEs is harder to review than two or three models.
 
+**Fetch external data in a model of its own.** A model that reads a remote
+source (`read_csv('https://...')`, `read_parquet('s3://...')`) must not read
+another model: no join to one and no filter by one. Join the fetched table in
+a later model. A model that reads another model is rebuilt when that model
+changes, and the inspector computes it again each time it is shown after an
+edit to that model. If it also fetches, each of those is a new download.
+
 **Select columns explicitly in final tables.** `select *` passes upstream
 changes through silently. Name the columns that a published table promises.
 

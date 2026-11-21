@@ -272,9 +272,17 @@ built, and its SQL and steps can still be read.
   back as SQL.
 - The SQL can be changed in place. The Run button, or Ctrl+Enter (Cmd+Enter
   on macOS), runs it: the steps and the rows are then those of the changed
-  SQL. Revert goes back to the file's SQL. The page keeps the change until
-  it is closed or reloaded, and writes nothing to the file. Only one
-  `select` statement can run.
+  SQL. Revert goes back to the file's SQL. Only one `select` statement can
+  run.
+- A change flows to the nodes after it. The changed model becomes a view of
+  its changed SQL, and each model after it a view of its file's SQL, so
+  their rows and the rows of their tests are computed again each time they
+  are shown. Such a node says `Recomputed from edit to` and the changed
+  model's name before its row count. A model that reads a table by its
+  path, not its name, does not see the change.
+- DuckDB keeps the changes in the table `plan.main.draft` until
+  `make inspect` stops, so they outlast a reload of the page. Nothing is
+  written to a file or to a built table.
 - A test shows the rows that fail it.
 - A model whose table stores SQL that differs from its file says to
   rebuild it when it is opened: its rows are from the earlier version.

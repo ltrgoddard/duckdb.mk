@@ -122,6 +122,7 @@ pre {
   margin: 0 -20px; padding: 12px 20px; background: var(--bg);
   color: var(--mute);
 }
+.via { color: var(--fg); }
 .err { color: var(--err); white-space: pre-wrap; font: 12.5px var(--mono); }
 table { border-collapse: collapse; font: 12.5px var(--mono); }
 th {
@@ -746,18 +747,27 @@ for (let n = 0; port && !db; n++) try {
 const all = async sql => (await db.queryArrow(sql)).toArray()
   .map(r => ({...r}))
 
+// what the page keeps in duckdb, so that it outlasts the page: each node's
+// sql as changed and run, and the models that had a table when duckdb started
+await all(`create table if not exists plan.main.draft (
+    target varchar primary key, sql varchar);
+  create table if not exists plan.main.built as
+    select schema_name s, view_name n from duckdb_views()
+    where database_name = 'memory' and not internal`)
+
 // the nodes: each model and test, its depth (its longest path from a node
-// that reads none of the others) and whether its table is built
+// that reads none of the others), whether its table is built and its sql as
+// changed, if it is
 const nodes = await all(`
   with recursive depth(t, d) using key (t) as (
     select target, 0 from plan.main.src
     union
     select e.target, d.d + 1 from depth d join plan.main.edge e on e.dep = d.t)
   select s.target id, s.kind, s.schema, s.name, s.file, s.content, s.out,
-    s.ast::varchar ast, d.d::int depth, v.view_name is not null built
+    d.d::int depth, b.n is not null built, f.sql draft
   from plan.main.src s join depth d on d.t = s.target
-  left join duckdb_views() v on v.database_name = 'memory'
-    and v.schema_name = s.schema and v.view_name = s.name
+  left join plan.main.built b on b.s = s.schema and b.n = s.name
+  left join plan.main.draft f on f.target = s.target
   order by s.kind, s.schema, s.name`)
 const edges = await all(
   "select target, dep from plan.main.edge where dep is not null")
@@ -771,6 +781,35 @@ const refs = new Map(nodes.filter(n => n.kind === "models").flatMap(n =>
 const ref = name => refs.get(name.toLowerCase()) && label(refs.get(name
   .toLowerCase()))
 const byLabel = Object.fromEntries(nodes.map(n => [label(n), n]))
+
+// the views, made again after a change: a changed model is a view of its sql
+// as changed, a model after one is a view of its file's sql, so that its rows
+// have the change, and any other is a view of its table as built. each node
+// gets the labels of the changed nodes before it
+const sync = async () => {
+  const rs = await all(`
+    with recursive live(t, src) as (
+      select target, target from plan.main.draft
+      union
+      select e.target, l.src from live l join plan.main.edge e on e.dep = l.t),
+    via as (select t, list(src) filter (src != t) srcs from live group by t)
+    select s.target id, to_json(coalesce(v.srcs, []))::varchar via,
+      '"' || s.schema || '"."' || s.name || '"' view,
+      if(s.kind = 'tests', '', 'create schema if not exists "' || s.schema ||
+        '"; ' || case when v.t is not null then 'create or replace view ' ||
+          view || ' as ' || json_deserialize_sql(json_serialize_sql(
+            coalesce(d.sql, s.content)))
+        when b.n is not null then 'create or replace view ' || view ||
+          ' as from ' || chr(39) || s.out || chr(39)
+        else 'drop view if exists ' || view end || '; ') ddl
+    from plan.main.src s left join via v on v.t = s.target
+    left join plan.main.draft d on d.target = s.target
+    left join plan.main.built b on b.s = s.schema and b.n = s.name`)
+  for (const r of rs)
+    byId[r.id].via = JSON.parse(r.via).map(id => label(byId[id]))
+  await all(rs.map(r => r.ddl).join(""))
+}
+await sync()
 const href = n => `#${port}:${token}:${n.id}`
 
 // the schemas, in the graph's order: by their mean depth, tests last; a
@@ -793,8 +832,9 @@ const list = order.map(g => $("section", {}, $("h2", {}, g),
   groups[g].map(n => links.get(n))))
 const head = $("header"), steps = $("ol")
 // the sql can be changed, and run with its button or with cmd or ctrl and
-// enter: the steps and the rows are then of the sql as changed, which the
-// page keeps for its node while it is open. nothing is written to a file
+// enter: the steps and the rows are then of the sql as changed, and so are
+// the rows of each node after it, until duckdb stops. nothing is written to
+// a file
 const sql = $("pre", {contenteditable: "plaintext-only", spellcheck: false})
 const run = $("button", {class: "act", hidden: true,
   title: "⌘↵ or Ctrl+↵"}, "Run")
@@ -920,13 +960,18 @@ const lineage = (shown, node) => {
 
 // the rows of a query, or of a promise of one: its first ROWS as duckdb
 // writes them, its columns' types, and how long it took; the count only
-// when asked for. an error of a kind in HINTS has its likely cause before it
+// when asked for. an error of a kind in HINTS has its likely cause before it.
+// before them, the changed nodes that the node in view has its rows from
 const ROWS = 500
 const HINTS = [[/Referenced (table|column)|not found in FROM/, "This part " +
   "cannot run alone if it uses columns of the query around it."],
   [/Table with name|does not exist|No files found/, "A table that this " +
   "reads is not built: make builds it."]]
-let running = 0
+let running = 0, current
+const via = () => current?.via.length ? [$("span", {class: "via"},
+  `Recomputed from edit${current.via.length > 1 ? "s" : ""} to `,
+  current.via.flatMap((l, i, a) => [i ? i < a.length - 1 ? ", " : " and " : "",
+    $("code", {}, l)])), " "] : []
 const rows = async sql => {
   const run = ++running, t = performance.now()
   status.replaceChildren("Running…")
@@ -938,12 +983,13 @@ const rows = async sql => {
     if (run !== running) return
     const more = data.length > ROWS, n = types.length
     const count = $("button", {onclick: async () => {
-      count.replaceWith(`${(await all(`select count(*)::int n from (${query
-        })`))[0].n.toLocaleString()} rows in all`)
+      count.replaceWith($("span", {}, `${(await all(`select count(*)::int n
+        from (${query})`))[0].n.toLocaleString()} rows in all`))
     }}, "Count")
-    status.replaceChildren(`${Math.min(data.length, ROWS).toLocaleString()}${
-      more ? "+" : ""} rows, ${n} column${n === 1 ? "" : "s"} in ${
-      Math.round(performance.now() - t)} ms`, ...more ? [count] : [])
+    status.replaceChildren($("span", {}, via(), `${Math.min(data.length, ROWS)
+      .toLocaleString()}${more ? "+" : ""} rows, ${n} column${n === 1 ? ""
+      : "s"} in ${Math.round(performance.now() - t)} ms`),
+      ...more ? [count] : [])
     const num = types.map(c => /INT|DECIMAL|DOUBLE|FLOAT|REAL/
       .test(c.column_type))
     grid.replaceChildren($("table", {}, $("tr", {}, types.map(c => $("th", {},
@@ -954,7 +1000,7 @@ const rows = async sql => {
   } catch (e) {
     if (run !== running) return
     const hint = HINTS.find(([re]) => re.test(e.message))?.[1]
-    status.replaceChildren()
+    status.replaceChildren(...via())
     grid.replaceChildren($("p", {class: "err"}, hint ? `${hint}\n\n` : "",
       e.message))
   }
@@ -968,6 +1014,7 @@ const rows = async sql => {
 const [{dir}] = await all("select parse_filename(getenv('PWD')) dir")
 const narrow = matchMedia("(max-width: 860px)")
 const open = async node => {
+  current = node
   for (const [n, a] of links) a.classList.toggle("on", n === node)
   schema.classList.toggle("on", !node)
   document.body.classList.toggle("all", !node)
@@ -1001,7 +1048,8 @@ const open = async node => {
     run.hidden = read() === shown
     revert.hidden = shown === node.content
   }
-  const show = async text => {
+  // keep: the text is a change to run, or the file's to go back to
+  const show = async (text, keep) => {
     const c = caret()
     sql.textContent = shown = node.draft = text
     if (c >= 0 && text) getSelection().collapse(sql.firstChild,
@@ -1014,6 +1062,12 @@ const open = async node => {
     const tree = JSON.parse(ast)
     if (tree.statements?.length !== 1) return rows(Promise.reject(Error(
       tree.error_message ?? "Expected one SELECT statement.")))
+    if (keep) {
+      await all(text === node.content ? `delete from plan.main.draft
+        where target = ${lit(node.id)}` : `insert or replace into
+        plan.main.draft values (${lit(node.id)}, ${lit(text)})`)
+      await sync()
+    }
     const plan = explain(tree.statements[0].node, ref)
     // each step from the first keyword of its clause, as tokens mark it
     const starts = tokens.map(t => t.start)
@@ -1051,10 +1105,10 @@ const open = async node => {
   sql.oninput = () => (node.draft = read(), mark())
   sql.onkeydown = e => {
     if (e.key !== "Enter" || !e.metaKey && !e.ctrlKey) return
-    e.preventDefault(), show(read())
+    e.preventDefault(), show(read(), true)
   }
-  run.onclick = () => show(read())
-  revert.onclick = () => show(node.content)
+  run.onclick = () => show(read(), true)
+  revert.onclick = () => show(node.content, true)
   show(node.draft ?? node.content)
 }
 

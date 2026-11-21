@@ -130,7 +130,7 @@ flowchart.
 dependency graph from the plan, and shows each model's SQL as steps in plain
 words. A click on a step or a clause runs the query up to that point against
 the tables as Make last built them. The SQL can be changed in the page and
-run; the change is not saved. The page is a static file. The queries
+run, and the nodes after it show their rows with the change; it is not saved. The page is a static file. The queries
 run in the DuckDB that `make inspect` starts, which the page reaches over
 DuckDB's [Quack](https://duckdb.org/docs/current/quack/overview) protocol.
 See [docs/REFERENCE.md](docs/REFERENCE.md#inspector).
