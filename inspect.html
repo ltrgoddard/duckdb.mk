@@ -5,9 +5,9 @@
 <title>Inspect</title>
 <link rel="icon" href="data:,">
 <style>
-/* the inspector: the models and tests, a node's lineage, its query as steps,
-   as sql or as a scratch copy to change, and the rows at the step last
-   clicked or of the scratch as last run */
+/* the inspector: the models and tests, a node's lineage, its query as steps
+   or as sql, which can be changed and run, and the rows at the step last
+   clicked */
 :root {
   --bg: #000; --fg: #fff; --mute: #808080; --line: #262626; --panel: #111;
   --hi: #00a3a3; --err: #ff6b6b; --name: #98c379; --s: #e6c07b; --n: #d19a66;
@@ -93,14 +93,8 @@ svg text.off { fill: var(--mute); }
 #rows { border-left: 1px solid var(--line); padding-top: 0; }
 .view { margin-bottom: 12px; }
 .view button + button { margin-left: -1px; }
-body:not([data-view=steps]) ol, body:not([data-view=sql]) pre,
-body:not([data-view=scratch]) form { display: none; }
-textarea {
-  display: block; width: 100%; min-height: 8lh; margin-bottom: 8px;
-  padding: 8px; field-sizing: content; resize: none; outline: none;
-  font: 12.5px/1.5 var(--mono); color: inherit; background: var(--panel);
-  border: 1px solid var(--line);
-}
+.view .act { margin-left: 8px; }
+body[data-view=sql] ol, body:not([data-view=sql]) pre { display: none; }
 ol { margin: 0; padding: 0; list-style: none; max-width: 80ch; }
 ol > li {
   margin: 0 0 2px calc(var(--d) * 1.2em); padding: 3px 8px; cursor: pointer;
@@ -112,13 +106,17 @@ ol ul { margin: 2px 0 0; padding-left: 1.2em; list-style: none; }
 .name { color: var(--name); }
 .s, .place { color: var(--s); overflow-wrap: anywhere; }
 .n { color: var(--n); }
-pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
-pre span { cursor: pointer; }
-pre .on { background: var(--panel); box-shadow: 0 0 0 1px var(--panel); }
-pre .KEYWORD { color: var(--hi); }
-pre .COMMENT { color: var(--mute); }
-pre .STRING_LITERAL { color: var(--s); }
-pre .NUMBER_LITERAL { color: var(--n); }
+pre {
+  margin: 0; min-height: 4lh; white-space: pre-wrap; overflow-wrap: anywhere;
+  outline: none;
+}
+/* the sql is one text, to change: its tokens and the clause of the step in
+   view are ranges of it, coloured by name */
+::highlight(on) { background-color: var(--line); }
+::highlight(KEYWORD) { color: var(--hi); }
+::highlight(COMMENT) { color: var(--mute); }
+::highlight(STRING_LITERAL) { color: var(--s); }
+::highlight(NUMBER_LITERAL) { color: var(--n); }
 .status {
   position: sticky; top: 0; display: flex; gap: 12px; align-items: center;
   margin: 0 -20px; padding: 12px 20px; background: var(--bg);
@@ -793,31 +791,39 @@ const links = new Map(nodes.map(n => [n, $("a", {href: href(n),
   style: `--c: ${colour(n)}`}, n.name)]))
 const list = order.map(g => $("section", {}, $("h2", {}, g),
   groups[g].map(n => links.get(n))))
-const head = $("header"), steps = $("ol"), sql = $("pre")
-// the scratch: a node's sql to change and run, kept while the page is open;
-// nothing is written to its file
-const draft = $("textarea", {spellcheck: false, "aria-label": "Scratch",
-  onkeydown: e => e.key === "Enter" && (e.metaKey || e.ctrlKey) &&
-    scratch.requestSubmit()})
-const scratch = $("form", {onsubmit: e => {
-  e.preventDefault()
-  rows(draft.value.replace(/[;\s]*$/, "\n"))
-}}, draft, $("button", {title: "⌘↵ or Ctrl+↵"}, "Run"))
+const head = $("header"), steps = $("ol")
+// the sql can be changed, and run with its button or with cmd or ctrl and
+// enter: the steps and the rows are then of the sql as changed, which the
+// page keeps for its node while it is open. nothing is written to a file
+const sql = $("pre", {contenteditable: "plaintext-only", spellcheck: false})
+const run = $("button", {class: "act", hidden: true,
+  title: "⌘↵ or Ctrl+↵"}, "Run")
+const revert = $("button", {class: "act", hidden: true}, "Revert")
+// the sql's text, as it is or as changed: a new line may be a br
+const read = (e = sql) => [...e.childNodes].map(c => c.data ?? "\n").join("")
+// where the caret is in the sql, in characters; -1 if it is not there
+const caret = () => {
+  const s = getSelection(), r = new Range
+  if (!sql.contains(s.focusNode)) return -1
+  r.selectNodeContents(sql), r.setEnd(s.focusNode, s.focusOffset)
+  return read(r.cloneContents()).length
+}
 const status = $("p", {class: "status"}), grid = $("div")
 const view = v => {
   document.body.dataset.view = v
   try { localStorage.view = v } catch {}
   for (const b of toggle.children) b.ariaPressed = b.value === v
 }
-const toggle = $("div", {class: "view"}, ["steps", "sql", "scratch"].map(v =>
+const toggle = $("div", {class: "view"}, ["steps", "sql"].map(v =>
   $("button", {value: v, onclick: () => view(v)}, v[0].toUpperCase() +
-    v.slice(1).replace("ql", "QL"))))
+    v.slice(1).replace("ql", "QL"))), run, revert)
 const schema = $("a", {href: `#${port}:${token}`, class: "schema"}, "Schema")
 msg.remove()
 document.body.append($("nav", {}, search, schema, list),
-  head, $("section", {id: "q"}, toggle, steps, sql, scratch),
+  head, $("section", {id: "q"}, toggle, steps, sql),
   $("section", {id: "rows"}, status, grid))
-try { view(localStorage.view ?? "steps") } catch { view("steps") }
+try { view(localStorage.view === "sql" ? "sql" : "steps") }
+catch { view("steps") }
 
 // the lines between the panes move, and stay where they were put: the
 // list's (in pixels), the head's (a share of the window's height) and the
@@ -856,12 +862,13 @@ search.oninput = () => {
   for (const s of list) s.hidden = ![...s.querySelectorAll("a")]
     .some(a => !a.hidden)
 }
-// j or down opens the next node in the list, k or up the one before
+// j or down opens the next node in the list as it is shown, k or up the one
+// before
 document.onkeydown = e => {
   const step = {j: 1, ArrowDown: 1, k: -1, ArrowUp: -1}[e.key]
-  if (!step || e.target.matches("input, textarea") || e.metaKey ||
+  if (!step || e.target === search || e.target === sql || e.metaKey ||
     e.ctrlKey) return
-  const shown = [...links.values()].filter(a => !a.hidden)
+  const shown = list.flatMap(s => [...s.querySelectorAll("a:not([hidden])")])
   const at = shown.findIndex(a => a.classList.contains("on"))
   shown[Math.max(0, Math.min(shown.length - 1, at + step))]?.click()
   e.preventDefault()
@@ -953,8 +960,8 @@ const rows = async sql => {
   }
 }
 
-// a node: its head, its lineage, its steps, its sql and its scratch, and the
-// rows of all of it. a click on a step, or on the sql of its clause, runs the query
+// a node: its head, its lineage, its steps and its sql, and the rows of
+// all of it. a click on a step, or on the sql of its clause, runs the query
 // to it and marks it in both
 // with no node, the schema: the lineage of every node, and its schemas'
 // colours
@@ -970,17 +977,12 @@ const open = async node => {
       {style: `--c: ${colour(groups[g][0])}`}, g))), lineage(nodes))
   narrow.matches ? scrollTo(0, 0)
     : links.get(node).scrollIntoView({block: "nearest"})
-  draft.value = node.draft ??= node.content
-  draft.oninput = () => node.draft = draft.value
   const [lead = "", ...rest] = node.content.match(/^(\s*--.*\n)*/)[0]
     .split(/^\s*--\s*$/m)
   const prose = s => s.replace(/^\s*-- ?/gm, "").trim()
-  const [[stored] = [], [{whole}], tokens] = await Promise.all([
-    node.built ? all(`select decode(value) v from parquet_kv_metadata(${
-      lit(node.out)}) where decode(key) = 'sql' limit 1`) : [],
-    all(`select json_deserialize_sql(ast) whole from plan.main.src
-      where target = ${lit(node.id)}`),
-    all(`from sql_tokenize(${lit(node.content)})`)])
+  const [stored] = node.built ? await all(`select decode(value) v
+    from parquet_kv_metadata(${lit(node.out)}) where decode(key) = 'sql'
+    limit 1`) : []
   head.replaceChildren($("div", {}, $("h1", {}, label(node)),
     prose(lead) && $("p", {}, prose(lead)),
     rest.length ? $("p", {class: "note"}, prose(rest.join(""))) : null,
@@ -992,34 +994,68 @@ const open = async node => {
       : null,
     lineage(nodes.filter(n => reach(node, "target", "dep").has(n.id) ||
       reach(node, "dep", "target").has(n.id)), node)))
-  const plan = explain(JSON.parse(node.ast).statements[0].node, ref)
-  // each step from the first keyword of its clause, as tokens mark it
-  const starts = tokens.map(t => t.start)
-  const at = plan.map(s => {
-    let i = starts.findLastIndex(p => p <= s.at)
-    while (i > 0 && tokens[i - 1].token_type === "KEYWORD") i--
-    return i < 0 ? Infinity : starts[i]
-  })
-  const end = i => Math.min(...at.filter(a => a > at[i]), Infinity)
-  const spans = tokens.map((t, i) => $("span", {class: t.token_type},
-    node.content.slice(t.start, starts[i + 1])))
-  const pick = i => {
-    steps.querySelectorAll(".on").forEach(e => e.classList.remove("on"))
-    sql.querySelectorAll(".on").forEach(e => e.classList.remove("on"))
-    if (i < 0) return rows(whole)
-    steps.children[i].classList.add("on")
-    tokens.forEach((t, k) => t.start >= at[i] && t.start < end(i) &&
-      spans[k].classList.add("on"))
-    rows(all(`select json_deserialize_sql(${lit(plan[i].query)}::json) q`)
-      .then(([{q}]) => q))
+  // the sql as last run, and the buttons: run if it has changed since,
+  // revert if it is not the file's
+  let shown
+  const mark = () => {
+    run.hidden = read() === shown
+    revert.hidden = shown === node.content
   }
-  steps.replaceChildren(...plan.map((s, i) => $("li", {style: `--d: ${s.depth}`,
-    onclick: () => pick(i)}, phrase(s.text),
-    s.lines && $("ul", {}, s.lines.map(l => $("li", {}, phrase(l)))))))
-  spans.forEach((s, k) => s.onclick = () => pick(at.lastIndexOf(
-    Math.max(...at.filter(a => a <= tokens[k].start)))))
-  sql.replaceChildren(node.content.slice(0, starts[0] ?? Infinity), ...spans)
-  pick(-1)
+  const show = async text => {
+    const c = caret()
+    sql.textContent = shown = node.draft = text
+    if (c >= 0 && text) getSelection().collapse(sql.firstChild,
+      Math.min(c, text.length))
+    CSS.highlights?.clear(), steps.replaceChildren(), mark()
+    const [[{ast}], tokens] = await Promise.all([
+      all(`select json_serialize_sql(${lit(text)}, skip_null := true,
+        skip_empty := true)::varchar ast`),
+      all(`from sql_tokenize(${lit(text)})`)])
+    const tree = JSON.parse(ast)
+    if (tree.statements?.length !== 1) return rows(Promise.reject(Error(
+      tree.error_message ?? "Expected one SELECT statement.")))
+    const plan = explain(tree.statements[0].node, ref)
+    // each step from the first keyword of its clause, as tokens mark it
+    const starts = tokens.map(t => t.start)
+    const at = plan.map(s => {
+      let i = starts.findLastIndex(p => p <= s.at)
+      while (i > 0 && tokens[i - 1].token_type === "KEYWORD") i--
+      return i < 0 ? Infinity : starts[i]
+    })
+    const end = i => Math.min(...at.filter(a => a > at[i]), text.length)
+    const paint = (name, spans) => CSS.highlights?.set(name, new Highlight(
+      ...spans.map(([a, b]) => {
+        const r = new Range
+        r.setStart(sql.firstChild, a), r.setEnd(sql.firstChild, b)
+        return r
+      })))
+    for (const [type, ts] of Object.entries(Object.groupBy(tokens.map((t, i) =>
+      [t.start, starts[i + 1] ?? text.length, t.token_type]), t => t[2])))
+      paint(type, ts)
+    const pick = i => {
+      steps.querySelectorAll(".on").forEach(e => e.classList.remove("on"))
+      steps.children[i]?.classList.add("on")
+      paint("on", i < 0 || at[i] === Infinity ? [] : [[at[i], end(i)]])
+      rows(all(`select json_deserialize_sql(${lit(i < 0 ? ast
+        : plan[i].query)}::json) q`).then(([{q}]) => q))
+    }
+    steps.replaceChildren(...plan.map((s, i) => $("li", {
+      style: `--d: ${s.depth}`, onclick: () => pick(i)}, phrase(s.text),
+      s.lines && $("ul", {}, s.lines.map(l => $("li", {}, phrase(l)))))))
+    // a click on the sql as last run is a click on the step of its clause
+    sql.onclick = () => read() === shown && getSelection()
+      .isCollapsed && pick(at.lastIndexOf(Math.max(...at.filter(a =>
+        a <= caret()))))
+    pick(-1)
+  }
+  sql.oninput = () => (node.draft = read(), mark())
+  sql.onkeydown = e => {
+    if (e.key !== "Enter" || !e.metaKey && !e.ctrlKey) return
+    e.preventDefault(), show(read())
+  }
+  run.onclick = () => show(read())
+  revert.onclick = () => show(node.content)
+  show(node.draft ?? node.content)
 }
 
 const route = () => {

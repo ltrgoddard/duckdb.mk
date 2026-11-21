@@ -265,16 +265,16 @@ built, and its SQL and steps can still be read.
 
 - A model's leading `--` comment is its description. A line that holds only
   `--` separates a note from it.
-- A query shows as steps in words, as its SQL or as a scratch copy, as
-  last chosen. A click on
+- A query shows as steps in words or as its SQL, as last chosen. A click on
   a step or a clause runs the query to it and marks it in both. Each step's
   SQL is DuckDB's own: the page cuts the query's syntax tree from
   `json_serialize_sql` after the step, and `json_deserialize_sql` gives it
   back as SQL.
-- Scratch holds a copy of the node's SQL to change and run, with the Run
-  button or Ctrl+Enter (Cmd+Enter on macOS). The page keeps the copy until
-  it is closed or reloaded, and writes nothing to the file. Only a query
-  that returns rows can run.
+- The SQL can be changed in place. The Run button, or Ctrl+Enter (Cmd+Enter
+  on macOS), runs it: the steps and the rows are then those of the changed
+  SQL. Revert goes back to the file's SQL. The page keeps the change until
+  it is closed or reloaded, and writes nothing to the file. Only one
+  `select` statement can run.
 - A test shows the rows that fail it.
 - A model whose table stores SQL that differs from its file says to
   rebuild it when it is opened: its rows are from the earlier version.
