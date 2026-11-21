@@ -55,9 +55,8 @@ serve: $(page)
 	@t=$$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n'); u="file://$(abspath $(page))#$(PORT):$$t"; \
 	  { sleep 1; xdg-open "$$u" || echo "$$BROWSE" | osascript - "$$u"; } >/dev/null 2>&1 & \
 	  $(DUCKDB) $(macros:%=-cmd '.read %') -cmd '.output /dev/null' -cmd "attach ':memory:' as plan; use plan" \
-	  -cmd "$$PLAN" -cmd "use memory; $$VIEWS" \
-	  -cmd "from quack_serve('quack:localhost:$(PORT)', token := '$$t')" -cmd '.output' \
-	  -cmd ".print open $$u"
+	  -cmd "$$PLAN" -cmd "use memory; $$VIEWS" -cmd "from quack_serve('quack:localhost:$(PORT)', token := '$$t')" \
+	  -cmd '.output' -cmd ".print open $$u"
 
 $(page):
 	$(if $(DUCKDB_MK),curl -sSfL --create-dirs -o $@ https://raw.githubusercontent.com/ltrgoddard/duckdb.mk/$(DUCKDB_MK)/$(@F),\
