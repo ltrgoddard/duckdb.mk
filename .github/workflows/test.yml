@@ -19,4 +19,4 @@ jobs:
           curl -sSfLO https://github.com/duckdb/duckdb/releases/$f && f=${f##*/}
           python3 -m $([[ $f = *.zip ]] && echo zip || echo tar)file -e $f "$RUNNER_TEMP"
           chmod +x "$RUNNER_TEMP/duckdb" && echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
-      - run: make --version | head -1 && duckdb --version && test/run
+      - run: make --version | head -1 && duckdb --version && make test

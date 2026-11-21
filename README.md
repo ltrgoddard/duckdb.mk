@@ -149,13 +149,17 @@ curl -sSfL --create-dirs -o .claude/skills/duckdb-mk/SKILL.md \
 
 ## Development
 
-`test/run` runs the end-to-end tests in `test/` in parallel against real `make`
-and `duckdb` executables (set `MAKE` and `DUCKDB` to try others). They cover
-rebuilds, dependency resolution, errors, partitioned models, the inspector's
-files, remote sources over HTTP and S3, a pipeline over millions of generated rows and a random
-300-model project checked against an independent model of its dependency
-graph. `test/bench [git ref ...]` times the working copy against earlier
-versions.
+The `Makefile` at the root is for work on duckdb.mk itself. `make test` runs
+the end-to-end tests in `test/` in parallel against real `make` and `duckdb`
+executables (set `MAKE` and `DUCKDB` to try others, and `S` to name suites).
+They cover rebuilds, dependency resolution, errors, partitioned models, the
+inspector's files, remote sources over HTTP and S3, a pipeline over millions
+of generated rows and a random 300-model project checked against an
+independent model of its dependency graph. `make bench` times the working
+copy against earlier versions (`REFS` names them). `make release V=v1.2.3`
+names the version in the docs, commits, tags and pushes. The example in
+`example/` includes the checkout's `duckdb.mk`, so it runs the code as it
+is.
 
 Contributions -- bug fixes, ergonomics, new features -- are encouraged. Please
 file an issue in the first instance.
