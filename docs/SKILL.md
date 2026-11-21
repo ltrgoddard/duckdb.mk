@@ -24,7 +24,7 @@ and rebuilds, and git for history. Keep to them. Do not add Python, dbt or a
 scheduler for work that a model or a Make rule can do.
 
 Someone will review your pipeline in the inspector (`make serve`), which shows
-each query as steps and runs each step in the browser. Write so that the
+each query as steps and runs each step. Write so that the
 review is easy: small models, literal source paths, a description on every
 model and a test for every assumption.
 
@@ -82,8 +82,8 @@ data/plants.csv:
 ```
 
 Use the latest tag from the releases page unless the user names a version.
-The inspector, and the SQL and commit stored in each table, need v0.3.0 or
-later.
+The SQL and commit stored in each table need v0.3.0 or later. The
+inspector needs a later version, and DuckDB 2.0 or later.
 Define extra targets after the `include`, so that `all` stays the default.
 
 ## Write models
@@ -224,8 +224,7 @@ models with a target-specific export:
 tables/gem/%: export RAW_URI = s3://bucket/gem/2026-11-01
 ```
 
-Never put a credential in a model, a macro or a file that make links for the
-inspector, which can be published. Leave credentials in the shell's
+Never put a credential in a model or a macro. Leave credentials in the shell's
 environment and create DuckDB secrets from them in a macro if needed.
 
 ## Build and verify
@@ -245,9 +244,8 @@ Follow these steps after every change:
 4. **Check what built a table.** Each table stores the SQL that built it and
    the git commit:
    `duckdb -c "select decode(key), decode(value) from parquet_kv_metadata('tables/x.parquet')"`.
-5. **Hand over for review.** Run `make inspect` to check that the page writes,
-   and tell the user to run `make serve`. Mention any model or test that you
-   could not build, and why.
+5. **Hand over for review.** Tell the user to run `make serve`. Mention any
+   model or test that you could not build, and why.
 
 To rebuild one table, `touch` its model's file and run `make`.
 `make -B` rebuilds a target and everything it depends on.
@@ -259,12 +257,11 @@ To rebuild one table, `touch` its model's file and run `make`.
 | `Only SELECT statements can be serialized to json` | A model or test holds `CREATE`, `SET` or another statement, or a `PIVOT` with no `in` list | Move setup into `macros/`; keep one `SELECT` per file; list the pivot's values |
 | `Table with name x does not exist` for every model, at a line of a macro | A macro reads a model | Join the table in the model, or pass its name to a table macro |
 | `expected one SELECT statement` | More than one statement in a file | Split it into models |
-| A table is not rebuilt after an edit | The edit fell in the same second as the build; Make 3.81 compares whole seconds | `touch` the model's file and run `make`; the inspector shows the table in italics |
+| A table is not rebuilt after an edit | The edit fell in the same second as the build; Make 3.81 compares whole seconds | `touch` the model's file and run `make`; the inspector says to rebuild it |
 | A model runs before its input exists | The path is built at run time | Write the path as a literal, or use `getenv` |
 | `Table with name x does not exist` in a test macro | The name passed to `query_table` has no schema | Pass `'main.x'` or `'schema.x'` |
 | `Deprecated lambda arrow` | DuckDB 2.0 rejects `->` lambdas | Write `lambda x: ...` |
 | `Too many open files` | A partitioned model has more values than the open-file limit on DuckDB 1.x | Partition on a coarser column, or use DuckDB 2.0 |
-| A step fails only in the inspector | DuckDB-Wasm lacks an extension, or a URL's server does not allow cross-origin requests | Note it for the reviewer; the build is not affected |
 
 ## Reference
 

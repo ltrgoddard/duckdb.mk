@@ -23,7 +23,7 @@ All directories are optional. Run `make` from the project root.
 | `DUCKDB` | `duckdb` | DuckDB executable           |
 | `BUILD`  | `tables` | Output directory            |
 | `PARQUET` | none    | Extra Parquet writer options, e.g. `compression zstd, row_group_size 10000` |
-| `INSPECT` | `$(BUILD)/inspect` | Directory of the inspector's page |
+| `PORT`   | `9494`   | Port of the inspector's DuckDB |
 
 Set them before the `include` or on the command line. `PARQUET` can also be
 set for one model or a group of them with a target-specific variable:
@@ -40,8 +40,7 @@ rebuild a model: run `make -B` on the models it applies to.
 | `test`                   | Build the models that tests need, then run all tests |
 | `test/<path>`            | Run one test                                         |
 | `shell`                  | Open DuckDB with the macros and a view of each built model; build nothing |
-| `inspect`                | Write the inspector's page to `$(INSPECT)`; build nothing |
-| `serve`                  | Write the page, then serve it on port 8000           |
+| `serve`                  | Open the inspector, with the shell of `shell`; build nothing |
 | `clean`                  | Remove `$(BUILD)`                                    |
 
 Standard Make flags apply: `-j` builds in parallel, and `-s` hides row counts
@@ -239,56 +238,50 @@ A local copy also works: `include duckdb.mk`.
 ## Inspector
 
 `make serve` shows the project as a page: its models and tests, their
-dependencies as the plan has them, and each query as steps that run in the
-browser. `make inspect` writes the page and does not serve it. Make fetches
-the page, one HTML file, at the version in `DUCKDB_MK`, the first time. With a
-local copy of `duckdb.mk` and no `DUCKDB_MK`, put the repository's `inspect/`
-directory beside it: Make fetches nothing, and stops if it is not there.
+dependencies as the plan has them, and each query as steps in plain words.
+It needs DuckDB 2.0 or later. Make fetches the page's two files,
+`inspect/index.html` and `inspect/words.js`, at the version in `DUCKDB_MK`,
+the first time. With a local copy of `duckdb.mk` and no `DUCKDB_MK`, put the
+repository's `inspect/` directory beside it: Make fetches nothing, and stops
+if it is not there.
 
-The page builds no model. Each run writes the plan again as `plan.mk` beside
-the page, so that its lines that name the files of a partitioned table, and
-of a pattern that a model reads, are current. It links into
-`$(INSPECT)/files` the SQL of the models, tests and macros, every built
-table and every local file in the project that a model names (with a
-shapefile, the `.shx`, `.dbf`, `.prj` and `.cpg` beside it), by hard link, or
-by copy on another filesystem. The page reads the plan and these files as
-they are. A model without a table shows as not built, and its SQL and steps
-can still be read.
-`$(INSPECT)` is a static site. To publish it, set `INSPECT` to a directory of
-a site, such as `site/inspect`. To build before each write, and to write on
-each `make`:
+`make serve` starts DuckDB with the macros, a view of each built model (as
+`make shell` does) and the plan, in a database named `plan`. DuckDB serves
+them on `localhost:$(PORT)` over its
+[Quack](https://duckdb.org/docs/current/quack/overview) protocol, with a
+random token for each run. Make then opens the page in the default browser
+as `file://.../inspect/index.html#<port>:<token>`, and prints that address
+in case the browser does not open it. The terminal shows DuckDB's shell,
+which shares the page's database. Quit the shell to stop the inspector.
 
-```make
-inspect: $(models)
-all: inspect
-```
+The page does not change: it reads the port and the token from its address.
+It loads the [Quack client](https://github.com/tobilg/quack-protocol) from
+jsDelivr, so the first load needs a network connection. It loads `words.js`
+through DuckDB, as a page opened from a file cannot read the files beside
+it. On macOS, Make sends the address to the browser with AppleScript, as
+`open` drops the part after `#` from a file's address.
+
+The page builds no model. Each query runs in DuckDB, with its extensions, its
+memory and the environment of `make`. A model without a table shows as not
+built, and its SQL and steps can still be read.
 
 - A model's leading `--` comment is its description. A line that holds only
   `--` separates a note from it.
 - A query shows as steps in words or as its SQL, as last chosen. A click on
-  a step or a clause runs the query to it and marks it in both.
+  a step or a clause runs the query to it and marks it in both. Each step's
+  SQL is DuckDB's own: `words.js` cuts the query's syntax tree from
+  `json_serialize_sql` after the step, and `json_deserialize_sql` gives it
+  back as SQL.
 - A test shows the rows that fail it.
 - A model whose table stores SQL that differs from its file says to
   rebuild it when it is opened: its rows are from the earlier version.
-- No variable's value is written for the page. A model that reads a
-  variable shows a field for it beside its file's name; `getenv` returns
-  what the viewer types there, or an empty string.
 - A step that reads a query around it (a correlated subquery, a `lateral`)
   cannot run alone, and says so.
-- Every model and test is listed, and every table is linked: a table in a
-  published page can be downloaded by its path.
-- Macros run in the browser in file order, less the shell's dot commands. A
-  statement that fails is tried again after the others. One that still
-  fails, such as a setting or an extension that DuckDB-Wasm lacks, is
-  skipped with a warning in the console.
-- A step that reads a URL works only if the server allows cross-origin
-  requests. Files outside the project, and paths built at run time, are not
-  linked.
-- The page loads DuckDB-Wasm and
-  [sql-formatter](https://github.com/sql-formatter-org/sql-formatter) from
-  jsDelivr at fixed versions, so the first load needs a network connection.
-  DuckDB-Wasm has about 4 GB of memory and one thread, and cannot stop a
-  query: reload the page to stop a step that runs for too long.
+
+`words.js` is an ES module with no dependencies. `explain(node, ref)` takes a
+statement's node from `json_serialize_sql` and returns its steps, and
+`text(phrase)` joins a step's phrase as text. See the comment at the top of
+the file.
 
 ## Steps that DuckDB cannot do
 

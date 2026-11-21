@@ -1,6 +1,6 @@
 DUCKDB ?= duckdb
 BUILD  ?= tables
-INSPECT ?= $(BUILD)/inspect
+PORT   ?= 9494
 , := ,
 
 self   := $(lastword $(MAKEFILE_LIST))
@@ -15,12 +15,13 @@ sql     = $$(awk '{s = s $$0 "\n"} END {sub(/[;[:space:]]+$$/, "", s); printf "%
 flags   = $(if $(findstring =,$(firstword $(MAKEFLAGS))),,$(firstword -$(MAKEFLAGS)))
 quiet   = $(findstring s,$(flags))
 page   := $(dir $(self))inspect/index.html
+words  := $(dir $(page))words.js
 commit := $(shell git describe --always --dirty 2>/dev/null)
 recheck = $(if $(filter-out FORCE,$?)$(findstring B,$(flags)),,$(if $($@.sources),$(run),$(db) -c) "$$FRESH" 2>/dev/null ||)
 
 all:
 clean: ; rm -rf $(BUILD)
-.PHONY: all test shell inspect serve clean FORCE
+.PHONY: all test shell serve clean FORCE
 .DELETE_ON_ERROR:
 
 ifneq ($(filter-out clean,$(or $(MAKECMDGOALS),all)),)
@@ -47,21 +48,19 @@ $(filter-out %.parquet,$(models)): $(wildcard macros) $(macros)
 $(tests): test/%: tests/%.sql $(macros)
 	@$(run) "$$PRELUDE" -c "$$ASSERT ($(sql)$$PASS"
 
-shell: export VIEWS = $(foreach m,$(models),$(if $(wildcard $m),$($m.view)))
+shell serve: export VIEWS = $(foreach m,$(models),$(if $(wildcard $m),$($m.view)))
 shell:
 	@$(DUCKDB) $(macros:%=-cmd '.read %') -cmd "$$VIEWS"
 
-inspect: $(page)
-	@mkdir -p $(INSPECT) && cp $(page) $(INSPECT) && rm -rf $(INSPECT)/files && \
-	  $(db) -cmd '.output $(INSPECT)/plan.mk' -c "$$PLAN" -cmd '.output' -c "$$LS" > $(INSPECT)/.ls && \
-	  while IFS= read -r f; do t="$(INSPECT)/files/$$f" && mkdir -p "$$(dirname "$$t")" && \
-	  { ln -f "$$f" "$$t" 2>/dev/null || cp "$$f" "$$t"; }; done < $(INSPECT)/.ls && rm $(INSPECT)/.ls
+serve: $(page) $(words)
+	@t=$$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n'); u="file://$(abspath $(page))#$(PORT):$$t"; \
+	  { sleep 1; xdg-open "$$u" || echo "$$BROWSE" | osascript - "$$u"; } >/dev/null 2>&1 & \
+	  $(DUCKDB) $(macros:%=-cmd '.read %') -cmd '.output /dev/null' -cmd "attach ':memory:' as plan; use plan" \
+	  -cmd "$$PLAN" -cmd "use memory; create view plan.main.words as from read_text('$(words)'); $$VIEWS" \
+	  -cmd "from quack_serve('quack:localhost:$(PORT)', token := '$$t')" -cmd '.output' \
+	  -cmd ".print open $$u"
 
-serve: inspect
-	@{ sleep 1 && python3 -m webbrowser http://localhost:8000/; } >/dev/null &
-	python3 -m http.server -d $(INSPECT) 8000
-
-$(page):
+$(page) $(words):
 	$(if $(DUCKDB_MK),curl -sSfL --create-dirs -o $@ https://raw.githubusercontent.com/ltrgoddard/duckdb.mk/$(DUCKDB_MK)/inspect/$(@F),\
 	  $(error put the inspect directory of duckdb.mk beside $(self)))
 
@@ -225,8 +224,7 @@ create table found as
 select m.target as t, f.file as x
 from glob(getvariable('globs')) as f
 join (select target, out as re from src where col <> '' union all select target, re from pat) as m
-  on if(m.target in (select target from src where col <> ''), f.file glob m.re, regexp_full_match(f.file, m.re))
-where not starts_with(f.file, '$(INSPECT)/');
+  on if(m.target in (select target from src where col <> ''), f.file glob m.re, regexp_full_match(f.file, m.re));
 
 create table vert as
 select n, 'n' || row_number() over (order by n) as id, coalesce(any_value(s), '[("' || replace(n, '"', '#quot;') || '")]') as s
@@ -277,6 +275,20 @@ from (
   select 'macros += ' || file from glob('macros/*.sql')
 ) as t(line)
 order by line;
+endef
+
+# a url, sent to the default browser as it is, on macOS: open, and open
+# location, drop a file url's fragment
+define BROWSE
+use framework "AppKit"
+use scripting additions
+on run {u}
+  set ws to current application's NSWorkspace's sharedWorkspace()
+  set https to current application's NSURL's URLWithString:"https:"
+  tell application ((ws's URLForApplicationToOpenURL:https)'s |path|() as text)
+    open location u
+  end tell
+end run
 endef
 
 define FP
@@ -336,18 +348,4 @@ define PASS
 $(if $(quiet),,select '$@: pass';)
 endef
 
-define LS
-set variable globs = (
-  select list(distinct p)
-  from (
-    select out from src where kind = 'models'
-    union all select d from arc
-    union all select regexp_replace(d, 'shp$$', '[sdpc][hbrp][xfjg]') from arc where d like '%.shp'
-    union all select unnest(['models/**/*.sql', 'tests/**/*.sql', 'macros/*.sql'])
-  ) as t(p)
-  where not regexp_matches(p, '^[/~]|\.\./|://')
-);
-select distinct file from glob(getvariable('globs')) where not starts_with(file, '$(INSPECT)/') order by file;
-endef
-
-export PLAN PRELUDE FRESH WRITE ASSERT PASS LS
+export PLAN PRELUDE FRESH WRITE ASSERT PASS BROWSE
