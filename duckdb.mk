@@ -1,5 +1,5 @@
 DUCKDB ?= duckdb
-BUILD  ?= build
+BUILD  ?= tables
 INSPECT ?= $(BUILD)/inspect
 , := ,
 

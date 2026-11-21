@@ -1,7 +1,7 @@
 # plan errors, build failures and what they leave behind
 mkdir -p models/s tests
 echo "select 1 as id" > models/ok.sql
-t "valid project" "build/ok.parquet"
+t "valid project" "tables/ok.parquet"
 
 try() { echo "$2" > "models/$1.sql"; t "$3" "!$4"; rm "models/$1.sql"; }
 try bad "SELEC 1" "parse error" 'models/bad.sql:1: syntax error at or near'
@@ -12,13 +12,13 @@ try bad "" "empty file" "models/bad.sql: expected one SELECT statement"
 try bad "create table x as select 1" "not a select" "models/bad.sql: Only SELECT statements"
 try bad "pivot ok on id" "pivot statement" "models/bad.sql: Only SELECT statements"
 try bad "from main.nope" "a name that is no model" "models/bad.sql: no model main.nope"
-try self "from self" "self reference" "dependency cycle: build/self.parquet"
+try self "from self" "self reference" "dependency cycle: tables/self.parquet"
 echo "from b" > models/a.sql && echo "from a" > models/b.sql
-t "cycle" "!dependency cycle: build/a.parquet build/b.parquet"
+t "cycle" "!dependency cycle: tables/a.parquet tables/b.parquet"
 echo "from c" > models/b.sql && echo "select * from s.d" > models/c.sql && echo "from a" > models/s/d.sql
-t "long cycle" "!dependency cycle: build/a.parquet build/b.parquet build/c.parquet build/s/d.parquet"
+t "long cycle" "!dependency cycle: tables/a.parquet tables/b.parquet tables/c.parquet tables/s/d.parquet"
 echo "from ok" > models/s/d.sql
-t "cycle broken" "build/a.parquet build/b.parquet build/c.parquet build/s/d.parquet"
+t "cycle broken" "tables/a.parquet tables/b.parquet tables/c.parquet tables/s/d.parquet"
 rm models/a.sql models/b.sql models/c.sql models/s/d.sql
 mkdir -p models/s/sub && echo "select 1" > models/s/Ok.sql && echo "select 2" > models/s/sub/oK.sql
 t "duplicate name across case and depth" "!duplicate model s.ok: models/s/Ok.sql, models/s/sub/oK.sql"
@@ -44,22 +44,22 @@ t "missing file" "!No rule to make target"
 rm models/orphan.sql
 
 echo "select range as id from range(3)" > models/ok.sql
-t "rebuild" "build/ok.parquet"
-before=$(q "select string_agg(id, ' ') from 'build/ok.parquet'")
+t "rebuild" "tables/ok.parquet"
+before=$(q "select string_agg(id, ' ') from 'tables/ok.parquet'")
 echo "select if(range = 2, error('boom'), range) as id from range(3)" > models/ok.sql
 t "runtime error" "!boom"
-is "runtime error keeps the last good output" "$(q "select string_agg(id, ' ') from 'build/ok.parquet'")" "$before"
+is "runtime error keeps the last good output" "$(q "select string_agg(id, ' ') from 'tables/ok.parquet'")" "$before"
 t "runtime error is retried" "!boom"
 echo "select if(range = 3000000, error('late'), range) as id from range(4000000)" > models/ok.sql
 t "error midway through writing" "!late"
-is "error midway keeps the last good output" "$(q "select string_agg(id, ' ') from 'build/ok.parquet'")" "$before"
-is "error midway leaves no temporary files" "$(find build -type f ! -name '*.parquet' ! -name plan.mk ! -name dag.mmd)" ""
+is "error midway keeps the last good output" "$(q "select string_agg(id, ' ') from 'tables/ok.parquet'")" "$before"
+is "error midway leaves no temporary files" "$(find tables -type f ! -name '*.parquet' ! -name plan.mk ! -name dag.mmd)" ""
 echo "select if(range = 3000000, error('late'), range) as id from range(4000000)" > models/new.sql
 t "new model fails midway" "!late"
-is "failed new model leaves no output" "$(find build -name 'new*')" ""
+is "failed new model leaves no output" "$(find tables -name 'new*')" ""
 rm models/new.sql
 printf 'select 1 as id -- a comment; \n ;\n\n' > models/ok.sql
-t "recovered, with a final semicolon and comment" "build/ok.parquet"
+t "recovered, with a final semicolon and comment" "tables/ok.parquet"
 
 echo "from ok where id > 0" > tests/fails.sql
 t "failing test" "!tests/fails.sql: 1 failing rows, e.g. [{'id': 1}]" test

@@ -14,7 +14,7 @@ description: Build, change and verify data pipelines made with duckdb.mk, a
 
 duckdb.mk is a short Makefile that builds a DuckDB project. Each `.sql` file
 under `models/` holds one `SELECT` statement and becomes one Parquet table
-under `build/`. duckdb.mk parses every query with DuckDB itself, finds the
+under `tables/`. duckdb.mk parses every query with DuckDB itself, finds the
 tables, files, URLs and environment variables that it reads, and gives Make
 the dependency graph. There is no configuration file and no `ref()`: a query
 refers to another model by its name.
@@ -53,16 +53,16 @@ model and a test for every assumption.
 | `tests/**/*.sql`  | One `SELECT` per file; a test fails if it returns rows    |
 | `macros/*.sql`    | Any SQL, run before every model, test and shell           |
 | `data/`           | Downloaded inputs, by convention                          |
-| `build/`          | Built tables and the generated plan                       |
+| `tables/`         | Built tables and the generated plan                       |
 
 Names come from paths. `models/census/counties.sql` builds
-`build/census/counties.parquet`, the table `census.counties`. A file at the
+`tables/census/counties.parquet`, the table `census.counties`. A file at the
 top of `models/` is in the schema `main`. Deeper directories do not change the
 name: `models/a/b/c.sql` is `a.c`. Use only letters, digits, `_`, `-` and `/`
 in paths.
 
 Commit `Makefile`, `models/`, `tests/`, `macros/` and any query files. Put
-`build/`, `data/` and `.duckdb.mk/` in `.gitignore`.
+`tables/`, `data/` and `.duckdb.mk/` in `.gitignore`.
 
 ## Set up a new project
 
@@ -138,7 +138,7 @@ an error. Use `cast` where bad input should stop the build. Where `try_cast`
 is necessary, add a test that counts the values it lost.
 
 **Partition large tables with a suffix.** `models/eog/detections@cell.sql`
-builds one file for each value of `cell` under `build/eog/detections/` and
+builds one file for each value of `cell` under `tables/eog/detections/` and
 keeps the name `eog.detections`. A partitioned model that returns no rows
 fails.
 
@@ -210,7 +210,7 @@ data/osm.json: queries/osm.overpassql
 ```
 
 A rule can also run another program between two models: depend on the
-upstream table (`build/x.parquet`) and write a file that a downstream model
+upstream table (`tables/x.parquet`) and write a file that a downstream model
 reads. The rule runs again each time the upstream table is written.
 
 ## Variables and secrets
@@ -221,7 +221,7 @@ variable in the Makefile (`export NAME ?= value`), or set it for a group of
 models with a target-specific export:
 
 ```make
-build/gem/%: export RAW_URI = s3://bucket/gem/2026-11-01
+tables/gem/%: export RAW_URI = s3://bucket/gem/2026-11-01
 ```
 
 Never put a credential in a model, a macro or a file that make links for the
@@ -239,12 +239,12 @@ Follow these steps after every change:
 2. **Test.** Run `make test`. A failing test prints its row count and three
    example rows, and stops.
 3. **Look at the rows.** Query a table directly:
-   `duckdb -c "summarize from 'build/matches.parquet'"`, or open `make shell`
+   `duckdb -c "summarize from 'tables/matches.parquet'"`, or open `make shell`
    for a view of every built model. Check null counts, ranges and distinct values
    for the columns that you changed.
 4. **Check what built a table.** Each table stores the SQL that built it and
    the git commit:
-   `duckdb -c "select decode(key), decode(value) from parquet_kv_metadata('build/x.parquet')"`.
+   `duckdb -c "select decode(key), decode(value) from parquet_kv_metadata('tables/x.parquet')"`.
 5. **Hand over for review.** Run `make inspect` to check that the page writes,
    and tell the user to run `make serve`. Mention any model or test that you
    could not build, and why.

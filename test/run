@@ -12,7 +12,7 @@ until read -r HTTP S3 < "$tmp/requests"; do kill -0 $server || exit; sleep 0.1; 
 t() {
   local label=$1 want=$2 out got; shift 2
   out=$($MAKE DUCKDB="$DUCKDB" "$@" 2>&1); sleep $nap
-  got=$(grep -oE '^(build|test)/[^:]+' <<<"$out" | sort | xargs)
+  got=$(grep -oE '^(tables|test)/[^:]+' <<<"$out" | sort | xargs)
   [[ $want == !* ]] || want=$(xargs -n1 <<<"$want" | sort | xargs)
   if [[ $want == !* && $out == *"${want#!}"* || $want != !* && $got == "$want" ]]; then echo "ok   $label"
   else echo "FAIL $label: want [$want] got [$got]"; sed 's/^/     /' <<<"$out"; fi
@@ -26,7 +26,7 @@ is() {
 
 # deps <target>: the prerequisites the plan gives a target but its own file, sorted
 deps() {
-  $MAKE -s DUCKDB="$DUCKDB" build/plan.mk >/dev/null; sleep $nap; sed -n "s|^$1: ||p" build/plan.mk | grep -vE "^(models|tests)/" | sort | xargs
+  $MAKE -s DUCKDB="$DUCKDB" tables/plan.mk >/dev/null; sleep $nap; sed -n "s|^$1: ||p" tables/plan.mk | grep -vE "^(models|tests)/" | sort | xargs
 }
 
 # q <sql>: run a query in the project and print the rows

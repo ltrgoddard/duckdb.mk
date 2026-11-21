@@ -4,7 +4,7 @@ import os, random
 random.seed(int(os.environ.get('SEED', 7)))
 n, mod = 300, 1000003
 models = [(f's{random.randrange(4)}' if random.random() < 0.6 else 'main', f'm{i}') for i in range(n)]
-target = lambda i: 'build/' + ('' if models[i][0] == 'main' else models[i][0] + '/') + models[i][1] + '.parquet'
+target = lambda i: 'tables/' + ('' if models[i][0] == 'main' else models[i][0] + '/') + models[i][1] + '.parquet'
 deps, value = {}, {}
 for i, (schema, name) in enumerate(models):
     os.makedirs('models' if schema == 'main' else f'models/{schema}', exist_ok=True)
@@ -41,17 +41,17 @@ PY
 all=$(cut -d' ' -f1 expected_values | xargs)
 dependents() { for m; do grep "^$m " dependents | cut -d' ' -f2-; done | xargs -n1 | sort -u | xargs; }
 
-is "plan edges" "$(deps >/dev/null; grep -E '^build/.*\.parquet: build/' build/plan.mk | sort)" "$(cat expected_edges)"
+is "plan edges" "$(deps >/dev/null; grep -E '^tables/.*\.parquet: tables/' tables/plan.mk | sort)" "$(cat expected_edges)"
 lim="set memory_limit = '300MB'; set max_temp_directory_size = '0B'"
-is "plan in 300 MB" "$(rm build/plan.mk; $MAKE -s DUCKDB="$DUCKDB -cmd \"$lim\"" build/plan.mk 2>&1)" ""
-is "no other prerequisites" "$(grep -E '^build/.*\.parquet: ' build/plan.mk | grep -vE ': (build/|models/|\$\(wildcard )')" ""
+is "plan in 300 MB" "$(rm tables/plan.mk; $MAKE -s DUCKDB="$DUCKDB -cmd \"$lim\"" tables/plan.mk 2>&1)" ""
+is "no other prerequisites" "$(grep -E '^tables/.*\.parquet: ' tables/plan.mk | grep -vE ': (tables/|models/|\$\(wildcard )')" ""
 t "parallel build" "$all" -j4
-is "values" "$(q "select concat_ws(' ', filename, n) from read_parquet('build/**/*.parquet', filename = true) order by 1")" \
+is "values" "$(q "select concat_ws(' ', filename, n) from read_parquet('tables/**/*.parquet', filename = true) order by 1")" \
   "$(cat expected_values)"
 t "no-op" "" -j4
 first=$(find models -name m0.sql) && touch "$first"
-t "touch the first model" "$(dependents "$(sed 's/^models/build/; s/sql$/parquet/' <<<"$first")")" -j4
+t "touch the first model" "$(dependents "$(sed 's/^models/tables/; s/sql$/parquet/' <<<"$first")")" -j4
 picked=$(xargs -n1 <<<"$all" | awk 'NR % 60 == 17' | xargs)
-for m in $picked; do touch "$(sed 's/^build/models/; s/parquet$/sql/' <<<"$m")"; done
+for m in $picked; do touch "$(sed 's/^tables/models/; s/parquet$/sql/' <<<"$m")"; done
 t "touch five models" "$(dependents $picked)" -j4
 t "no-op again" "" -j4

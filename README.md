@@ -70,8 +70,8 @@ group by customer
 
 ```console
 $ make
-build/staging/orders.parquet: 3 rows
-build/revenue.parquet: 2 rows
+tables/staging/orders.parquet: 3 rows
+tables/revenue.parquet: 2 rows
 $ make
 make: Nothing to be done for `all'.
 ```
@@ -113,15 +113,15 @@ other schemas and tables in the collection by name. A file named
 that column, and keeps the name `table`.
 
 Tests are stored in `tests/` and macros -- SQL run before every model statement
--- in `macros/`. Built Parquet tables are stored in `build/` organised by
+-- in `macros/`. Built Parquet tables are stored in `tables/` organised by
 schema. `data/` is conventionally used for downloaded source data, but this
 location is optional and sources are often remote.
 
 Build tables in the normal Make way, by running `make
-build/schema/table.parquet`. duckdb.mk will take care of dependencies,
+tables/schema/table.parquet`. duckdb.mk will take care of dependencies,
 including checking modification dates of local and remote resources to save on
 full rebuilds and ensure fresh data when needed. Each run also writes the
-dependency graph to `build/dag.mmd` as a [Mermaid](https://mermaid.js.org)
+dependency graph to `tables/dag.mmd` as a [Mermaid](https://mermaid.js.org)
 flowchart.
 
 ## Inspector

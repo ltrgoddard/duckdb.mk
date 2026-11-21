@@ -21,13 +21,13 @@ All directories are optional. Run `make` from the project root.
 | Variable | Default  | Meaning                     |
 | -------- | -------- | --------------------------- |
 | `DUCKDB` | `duckdb` | DuckDB executable           |
-| `BUILD`  | `build`  | Output directory            |
+| `BUILD`  | `tables` | Output directory            |
 | `PARQUET` | none    | Extra Parquet writer options, e.g. `compression zstd, row_group_size 10000` |
 | `INSPECT` | `$(BUILD)/inspect` | Directory of the inspector's page |
 
 Set them before the `include` or on the command line. `PARQUET` can also be
 set for one model or a group of them with a target-specific variable:
-`build/geo/%: PARQUET = row_group_size 10000`. A changed option does not
+`tables/geo/%: PARQUET = row_group_size 10000`. A changed option does not
 rebuild a model: run `make -B` on the models it applies to.
 
 ## Targets
@@ -70,18 +70,18 @@ A partitioned model writes one Parquet file for each value of its column:
 
 ```
 models/eog/detections@cell.sql
-build/eog/detections/cell=0/data.parquet
-build/eog/detections/cell=1/data.parquet
+tables/eog/detections/cell=0/data.parquet
+tables/eog/detections/cell=1/data.parquet
 ```
 
 - Each file contains the column, so a read of
-  `'build/eog/detections/*/data.parquet'` returns it without
+  `'tables/eog/detections/*/data.parquet'` returns it without
   `hive_partitioning`. Directory names hold the values as DuckDB writes them:
   percent-encoded, with `__HIVE_DEFAULT_PARTITION__` for null.
 - Refer to the model by name (`from eog.detections`), with a glob over its
-  files, such as `'build/eog/detections/*/data.parquet'` or
-  `'build/**/*.parquet'`, or by the path of one partition, such as
-  `'build/eog/detections/cell=1/data.parquet'`.
+  files, such as `'tables/eog/detections/*/data.parquet'` or
+  `'tables/**/*.parquet'`, or by the path of one partition, such as
+  `'tables/eog/detections/cell=1/data.parquet'`.
 - Every file stores the fingerprint. The build writes to `$(BUILD)/<path>.tmp`
   and then replaces the directory, so a failed build keeps the previous
   partitions and a rebuild leaves no stale ones.
@@ -107,12 +107,12 @@ on:
 | In the SQL                           | Dependency                              |
 | ------------------------------------ | --------------------------------------- |
 | `schema.table` or `table`            | The matching model (`main` if no schema) |
-| `'build/x.parquet'` or `'schema.table'` as a string | The matching model       |
-| Another path in `$(BUILD)`, e.g. `'build/solve.csv'` | That file; a Make rule can create it |
+| `'tables/x.parquet'` or `'schema.table'` as a string | The matching model       |
+| Another path in `$(BUILD)`, e.g. `'tables/solve.csv'` | That file; a Make rule can create it |
 | A local file path, e.g. `'data/x.csv'` or `sqlite_scan('data/x.db', 't')` | That file; a Make rule can create it |
 | A bare filename, e.g. `'x.csv'`      | `$(wildcard ...)` of it                 |
 | A glob, e.g. `'data/*.csv'`          | `$(wildcard ...)` of it; checked on every run |
-| A glob in `$(BUILD)`, e.g. `'build/marts/*.parquet'` | Every model it matches; checked on every run |
+| A glob in `$(BUILD)`, e.g. `'tables/marts/*.parquet'` | Every model it matches; checked on every run |
 | `http://`, `s3://` and other URLs    | Checked on every run (see below)        |
 | `getenv('NAME')`                     | Checked on every run (see below)        |
 | `getenv('NAME') \|\| '/x.csv'`, a variable then a literal | The variable, and the file or glob that the two name, checked on every run |
@@ -131,7 +131,7 @@ with other characters, such as a space, but Make does not know it. A path
 outside the project is a dependency like any other.
 
 A dependency that the SQL does not show can be given in the Makefile, after
-the `include`: `build/b.parquet: build/a.parquet`. The model then has a view
+the `include`: `tables/b.parquet: tables/a.parquet`. The model then has a view
 of `a` as if it had named it.
 
 A macro cannot read a model. DuckDB 2.0 looks up each table that a macro
@@ -169,7 +169,7 @@ built it and `git describe --always --dirty` (empty outside a git
 repository). Neither is part of the fingerprint. To see what built a table:
 
 ```sql
-select decode(key), decode(value) from parquet_kv_metadata('build/x.parquet')
+select decode(key), decode(value) from parquet_kv_metadata('tables/x.parquet')
 ```
 
 ### Track an external run
@@ -183,10 +183,10 @@ select * from read_csv(getenv('RAW_URI') || '/plants.csv')
 ```
 
 ```make
-build/gem/%: export RAW_URI = s3://bucket/gem/2026-11-01
+tables/gem/%: export RAW_URI = s3://bucket/gem/2026-11-01
 ```
 
-The target-specific `export` sets the variable for each model in `build/gem/`.
+The target-specific `export` sets the variable for each model in `tables/gem/`.
 duckdb.mk checks its value on every run, and the size and modification time
 of the file that the variable and the literal name. It rebuilds the models
 that read them when either changes.
@@ -304,7 +304,7 @@ select * from sqlite_scan('data/research.db', 'company_parent')
 ```
 
 ```make
-data/research.db: build/candidates.parquet jobs/company_parent.sql
+data/research.db: tables/candidates.parquet jobs/company_parent.sql
 	rm -f $@.tmp
 	BRIC_AUTO=0 sqlite3 $@.tmp -cmd '.load ext/bric' < jobs/company_parent.sql
 	$(DUCKDB) -c "attach '$@.tmp' as r (type sqlite); \

@@ -181,31 +181,31 @@ echo "from nulls('core.well_months', 'ultimate_id')" > tests/owned.sql
 echo "from marts.report where json_array_length(doc->'owners') <> 5 or json_array_length(doc->'years') <> 5" \
   > tests/report.sql
 
-models=$(find models -name '*.sql' | sed 's/^models/build/; s/sql$/parquet/' | sort | xargs)
+models=$(find models -name '*.sql' | sed 's/^models/tables/; s/sql$/parquet/' | sort | xargs)
 tests=$(ls tests | sed 's/^/test\//; s/\.sql$//' | xargs)
 t "build" "$models $tests" -j4 all test
-is "wells" "$(q "select count(*) from 'build/raw/wells.parquet'")" 40000
-is "production rows" "$(q "select count(*) from 'build/raw/production.parquet'")" \
-  "$(q "select sum(60 - datediff('month', date '2019-01-01', spud_date)) from 'build/raw/wells.parquet'")"
-is "flares" "$(q "select sum(detections) from 'build/marts/flaring.parquet'")" 300000
-is "well months are unique" "$(q "select count(*) = count(distinct (well_id, month)) from 'build/core/well_months.parquet'")" true
-is "ownership" "$(q "select concat_ws(' ', operator_id, ultimate_id, depth) from 'build/core/ownership.parquet' order by 1")" \
-  "$(q "copy (select id, parent_id from 'build/raw/operators.parquet') to '/dev/stdout' (header false)" | python3 -c "
+is "wells" "$(q "select count(*) from 'tables/raw/wells.parquet'")" 40000
+is "production rows" "$(q "select count(*) from 'tables/raw/production.parquet'")" \
+  "$(q "select sum(60 - datediff('month', date '2019-01-01', spud_date)) from 'tables/raw/wells.parquet'")"
+is "flares" "$(q "select sum(detections) from 'tables/marts/flaring.parquet'")" 300000
+is "well months are unique" "$(q "select count(*) = count(distinct (well_id, month)) from 'tables/core/well_months.parquet'")" true
+is "ownership" "$(q "select concat_ws(' ', operator_id, ultimate_id, depth) from 'tables/core/ownership.parquet' order by 1")" \
+  "$(q "copy (select id, parent_id from 'tables/raw/operators.parquet') to '/dev/stdout' (header false)" | python3 -c "
 import sys
 parent = dict(line.strip().split(',') for line in sys.stdin)
 top = lambda i, d=0: top(parent[i], d + 1) if parent[i] else (i, d)
 print(*sorted(' '.join((i, *map(str, top(i)))) for i in parent), sep='\n')")"
-checksum() { for f in build/marts/*.parquet; do q "select md5(string_agg(t::varchar, ',' order by t::varchar)) from '$f' as t"; done; }
+checksum() { for f in tables/marts/*.parquet; do q "select md5(string_agg(t::varchar, ',' order by t::varchar)) from '$f' as t"; done; }
 before=$(checksum)
 t "rebuild everything serially" "$models" -B -j1
 is "builds are deterministic" "$(checksum)" "$before"
 is "shell" "$(printf '.mode list\n.headers off\nselect count(*) from marts.report;' | $MAKE -s shell)" 8
 
 echo "-- a comment" >> models/raw/prices.sql
-t "price edit" "build/core/revenue.parquet build/marts/report.parquet build/raw/prices.parquet"
+t "price edit" "tables/core/revenue.parquet tables/marts/report.parquet tables/raw/prices.parquet"
 echo "-- a comment" >> models/raw/flaring.sql
-t "flaring edit" "build/marts/flaring.parquet build/raw/flaring.parquet"
+t "flaring edit" "tables/marts/flaring.parquet tables/raw/flaring.parquet"
 echo "-- a comment" >> models/core/ownership.sql
-t "ownership edit" "build/core/ownership.parquet build/core/well_months.parquet build/marts/basins.parquet \
-build/marts/decline.parquet build/marts/report.parquet build/marts/top_owners.parquet"
+t "ownership edit" "tables/core/ownership.parquet tables/core/well_months.parquet tables/marts/basins.parquet \
+tables/marts/decline.parquet tables/marts/report.parquet tables/marts/top_owners.parquet"
 t "tests after edits" "$tests" test
