@@ -66,7 +66,7 @@ Commit `Makefile`, `models/`, `tests/`, `macros/` and any query files. Put
 # variables that queries read with getenv() must be exported
 export RADIUS ?= 250
 
-DUCKDB_MK = v0.3.0
+DUCKDB_MK = v0.3.1
 include .duckdb.mk/$(DUCKDB_MK)/duckdb.mk
 .duckdb.mk/%/duckdb.mk:
 	curl -sSfL --create-dirs -o $@ \

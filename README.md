@@ -30,11 +30,11 @@ with `make inspect`*
 You need [DuckDB](https://duckdb.org) 1.4.1 or later, GNU Make 3.81 or later
 and `curl`. The inspector needs DuckDB 2.0 or later.
 
-Put this at the top of your project's Makefile to install duckdb.mk v0.3.0
+Put this at the top of your project's Makefile to install duckdb.mk v0.3.1
 on the next build:
 
 ```make
-DUCKDB_MK = v0.3.0
+DUCKDB_MK = v0.3.1
 include .duckdb.mk/$(DUCKDB_MK)/duckdb.mk
 .duckdb.mk/%/duckdb.mk:
 	curl -sSfL --create-dirs -o $@ \

@@ -22,7 +22,7 @@ See also [recipes](RECIPES.md) and [development](DEVELOPMENT.md).
 # visible to getenv('NAME')
 export NAME ?= value
 # a branch or tag
-DUCKDB_MK = v0.3.0
+DUCKDB_MK = v0.3.1
 include .duckdb.mk/$(DUCKDB_MK)/duckdb.mk
 .duckdb.mk/%/duckdb.mk:
 	curl -sSfL --create-dirs -o $@ \
