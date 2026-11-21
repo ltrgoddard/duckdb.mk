@@ -54,9 +54,10 @@ shell:
 inspect: $(page)
 	@t=$$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n'); u="file://$(abspath $(page))#$(PORT):$$t"; \
 	  { sleep 1; xdg-open "$$u" || echo "$$BROWSE" | osascript - "$$u"; } >/dev/null 2>&1 & \
-	  $(DUCKDB) $(macros:%=-cmd '.read %') -cmd '.output /dev/null' -cmd "attach ':memory:' as plan; use plan" \
+	  cat | $(DUCKDB) $(macros:%=-cmd '.read %') -cmd '.output /dev/null' -cmd "attach ':memory:' as plan; use plan" \
 	  -cmd "$$PLAN" -cmd "use memory; $$VIEWS" -cmd "from quack_serve('quack:localhost:$(PORT)', token := '$$t')" \
-	  -cmd '.output' -cmd ".print open $$u"
+	  -cmd "call enable_logging('QueryLog', storage := 'stdout')" -cmd '.output' -cmd ".print open $$u" | \
+	  awk -v w=$$(tput cols 2>/dev/null || echo 999) "$$LOG"
 
 $(page):
 	$(if $(DUCKDB_MK),curl -sSfL --create-dirs -o $@ https://raw.githubusercontent.com/ltrgoddard/duckdb.mk/$(DUCKDB_MK)/$(@F),\
@@ -289,6 +290,19 @@ on run {u}
 end run
 endef
 
+# duckdb's log of the page's queries, a line each, cut to the terminal's
+# width, less quack's own; a line that is not of the log, as it is
+define LOG
+!n && !/\tQueryLog\t/ { print; fflush(); next }
+{ s = s " " $$0; n += gsub(/"/, "&") }
+n % 2 == 0 {
+  sub(/^.*\tQueryLog\t[A-Z]+\t"?/, "", s); sub(/"$$/, "", s)
+  gsub(/""/, "\"", s); gsub(/[ \t]+/, " ", s)
+  if (s !~ /^SELECT quack_/) { print substr(s, 1, w); fflush() }
+  s = ""; n = 0
+}
+endef
+
 define FP
 set variable sql = (select content from read_text('$(src)'));
 set variable fp = md5(concat_ws(
@@ -346,4 +360,4 @@ define PASS
 $(if $(quiet),,select '$@: pass';)
 endef
 
-export PLAN PRELUDE FRESH WRITE ASSERT PASS BROWSE
+export PLAN PRELUDE FRESH WRITE ASSERT PASS BROWSE LOG

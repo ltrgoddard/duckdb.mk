@@ -40,7 +40,7 @@ rebuild a model: run `make -B` on the models it applies to.
 | `test`                   | Build the models that tests need, then run all tests |
 | `test/<path>`            | Run one test                                         |
 | `shell`                  | Open DuckDB with the macros and a view of each built model; build nothing |
-| `inspect`                | Open the inspector, with the shell of `shell`; build nothing |
+| `inspect`                | Open the inspector and log its queries; build nothing |
 | `clean`                  | Remove `$(BUILD)`                                    |
 
 Standard Make flags apply: `-j` builds in parallel, and `-s` hides row counts
@@ -250,8 +250,9 @@ them on `localhost:$(PORT)` over its
 [Quack](https://duckdb.org/docs/current/quack/overview) protocol, with a
 random token for each run. Make then opens the page in the default browser
 as `file://.../inspect.html#<port>:<token>`, and prints that address
-in case the browser does not open it. The terminal shows DuckDB's shell,
-which shares the page's database. Quit the shell to stop the inspector.
+in case the browser does not open it. The terminal then shows each query
+that the page runs, on one line, cut to the terminal's width. Press Ctrl+C
+or Ctrl+D to stop the inspector.
 
 The page does not change: it reads the port and the token from its address.
 It loads the [Quack client](https://github.com/tobilg/quack-protocol) from
@@ -264,11 +265,16 @@ built, and its SQL and steps can still be read.
 
 - A model's leading `--` comment is its description. A line that holds only
   `--` separates a note from it.
-- A query shows as steps in words or as its SQL, as last chosen. A click on
+- A query shows as steps in words, as its SQL or as a scratch copy, as
+  last chosen. A click on
   a step or a clause runs the query to it and marks it in both. Each step's
   SQL is DuckDB's own: the page cuts the query's syntax tree from
   `json_serialize_sql` after the step, and `json_deserialize_sql` gives it
   back as SQL.
+- Scratch holds a copy of the node's SQL to change and run, with the Run
+  button or Ctrl+Enter (Cmd+Enter on macOS). The page keeps the copy until
+  it is closed or reloaded, and writes nothing to the file. Only a query
+  that returns rows can run.
 - A test shows the rows that fail it.
 - A model whose table stores SQL that differs from its file says to
   rebuild it when it is opened: its rows are from the earlier version.

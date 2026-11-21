@@ -5,8 +5,9 @@
 <title>Inspect</title>
 <link rel="icon" href="data:,">
 <style>
-/* the inspector: the models and tests, a node's lineage, its query as steps
-   or as sql, and the rows at the step last clicked */
+/* the inspector: the models and tests, a node's lineage, its query as steps,
+   as sql or as a scratch copy to change, and the rows at the step last
+   clicked or of the scratch as last run */
 :root {
   --bg: #000; --fg: #fff; --mute: #808080; --line: #262626; --panel: #111;
   --hi: #00a3a3; --err: #ff6b6b; --name: #98c379; --s: #e6c07b; --n: #d19a66;
@@ -92,7 +93,14 @@ svg text.off { fill: var(--mute); }
 #rows { border-left: 1px solid var(--line); padding-top: 0; }
 .view { margin-bottom: 12px; }
 .view button + button { margin-left: -1px; }
-body[data-view=sql] ol, body:not([data-view=sql]) pre { display: none; }
+body:not([data-view=steps]) ol, body:not([data-view=sql]) pre,
+body:not([data-view=scratch]) form { display: none; }
+textarea {
+  display: block; width: 100%; min-height: 8lh; margin-bottom: 8px;
+  padding: 8px; field-sizing: content; resize: none; outline: none;
+  font: 12.5px/1.5 var(--mono); color: inherit; background: var(--panel);
+  border: 1px solid var(--line);
+}
 ol { margin: 0; padding: 0; list-style: none; max-width: 80ch; }
 ol > li {
   margin: 0 0 2px calc(var(--d) * 1.2em); padding: 3px 8px; cursor: pointer;
@@ -786,19 +794,28 @@ const links = new Map(nodes.map(n => [n, $("a", {href: href(n),
 const list = order.map(g => $("section", {}, $("h2", {}, g),
   groups[g].map(n => links.get(n))))
 const head = $("header"), steps = $("ol"), sql = $("pre")
+// the scratch: a node's sql to change and run, kept while the page is open;
+// nothing is written to its file
+const draft = $("textarea", {spellcheck: false, "aria-label": "Scratch",
+  onkeydown: e => e.key === "Enter" && (e.metaKey || e.ctrlKey) &&
+    scratch.requestSubmit()})
+const scratch = $("form", {onsubmit: e => {
+  e.preventDefault()
+  rows(draft.value.replace(/[;\s]*$/, "\n"))
+}}, draft, $("button", {title: "⌘↵ or Ctrl+↵"}, "Run"))
 const status = $("p", {class: "status"}), grid = $("div")
 const view = v => {
   document.body.dataset.view = v
   try { localStorage.view = v } catch {}
   for (const b of toggle.children) b.ariaPressed = b.value === v
 }
-const toggle = $("div", {class: "view"}, ["steps", "sql"].map(v =>
+const toggle = $("div", {class: "view"}, ["steps", "sql", "scratch"].map(v =>
   $("button", {value: v, onclick: () => view(v)}, v[0].toUpperCase() +
     v.slice(1).replace("ql", "QL"))))
 const schema = $("a", {href: `#${port}:${token}`, class: "schema"}, "Schema")
 msg.remove()
 document.body.append($("nav", {}, search, schema, list),
-  head, $("section", {id: "q"}, toggle, steps, sql),
+  head, $("section", {id: "q"}, toggle, steps, sql, scratch),
   $("section", {id: "rows"}, status, grid))
 try { view(localStorage.view ?? "steps") } catch { view("steps") }
 
@@ -842,7 +859,8 @@ search.oninput = () => {
 // j or down opens the next node in the list, k or up the one before
 document.onkeydown = e => {
   const step = {j: 1, ArrowDown: 1, k: -1, ArrowUp: -1}[e.key]
-  if (!step || e.target === search || e.metaKey || e.ctrlKey) return
+  if (!step || e.target.matches("input, textarea") || e.metaKey ||
+    e.ctrlKey) return
   const shown = [...links.values()].filter(a => !a.hidden)
   const at = shown.findIndex(a => a.classList.contains("on"))
   shown[Math.max(0, Math.min(shown.length - 1, at + step))]?.click()
@@ -935,8 +953,8 @@ const rows = async sql => {
   }
 }
 
-// a node: its head, its lineage, its steps and its sql, and the rows of
-// all of it. a click on a step, or on the sql of its clause, runs the query
+// a node: its head, its lineage, its steps, its sql and its scratch, and the
+// rows of all of it. a click on a step, or on the sql of its clause, runs the query
 // to it and marks it in both
 // with no node, the schema: the lineage of every node, and its schemas'
 // colours
@@ -952,6 +970,8 @@ const open = async node => {
       {style: `--c: ${colour(groups[g][0])}`}, g))), lineage(nodes))
   narrow.matches ? scrollTo(0, 0)
     : links.get(node).scrollIntoView({block: "nearest"})
+  draft.value = node.draft ??= node.content
+  draft.oninput = () => node.draft = draft.value
   const [lead = "", ...rest] = node.content.match(/^(\s*--.*\n)*/)[0]
     .split(/^\s*--\s*$/m)
   const prose = s => s.replace(/^\s*-- ?/gm, "").trim()

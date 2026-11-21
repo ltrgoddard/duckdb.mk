@@ -13,7 +13,7 @@ echo "from top where id < 0" > tests/t.sql
 echo "create macro twice(x) as x * 2;" > macros/m.sql
 $MAKE -s DUCKDB="$DUCKDB" tables/s/a.parquet > /dev/null
 
-# the inspector on a free port, with stdin held open for duckdb's shell, and a
+# the inspector on a free port, with stdin held open so that duckdb stays, and a
 # browser that notes the url that it is given
 printf '#!/bin/sh\necho "$1" > opened\n' > bin/xdg-open && chmod +x bin/xdg-open
 port=$((20000 + RANDOM % 20000)) && mkfifo in
@@ -35,7 +35,9 @@ is "a wrong token" "$(sq "select 1" wrong | grep -c 'Authentication failed')" 1
 for n in {1..20}; do [[ -s opened ]] && break; sleep 0.1; done
 is "the browser is given the url" "$(cat opened)" "$url"
 exec 3>&-; wait
-is "duckdb stops with its shell" "$(sq "select 1" | grep -c 'Authentication failed\|^1$')" 0
+is "the terminal has a line for each query, and none of quack's own" \
+  "$(grep -c 'select string_agg(target' out) $(grep -c 'quack_' out)" '1 0'
+is "duckdb stops when its input ends" "$(sq "select 1" | grep -c 'Authentication failed\|^1$')" 0
 is "a local copy fetches no page" \
   "$(rm inspect.html; $MAKE -s DUCKDB="$DUCKDB" inspect 2>&1 < /dev/null | grep -c 'put inspect.html')" 1
 
