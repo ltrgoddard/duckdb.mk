@@ -66,10 +66,11 @@ make: Nothing to be done for `all'.
 The everyday commands are:
 
 ```sh
-make          # build the tables
-make test     # run SQL tests
-make shell    # query the built tables in DuckDB
-make inspect  # explore the project in the browser
+make                 # build the tables
+make test            # run SQL tests
+make shell           # query the built tables in DuckDB
+make query Q="from revenue"  # run one query, print CSV
+make inspect         # explore the project in the browser
 ```
 
 See [`example/`](example/) for a complete project analysing methane emissions

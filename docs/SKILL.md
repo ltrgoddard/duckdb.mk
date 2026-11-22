@@ -244,10 +244,9 @@ results and report what was verified:
    a bad filter or join condition.
 2. **Test.** Run `make test`. A failing test prints its row count and three
    example rows, and stops.
-3. **Look at the rows.** Query a table directly:
-   `duckdb -c "summarize from 'tables/matches.parquet'"`, or open `make shell`
-   for a view of every built model. Check null counts, ranges and distinct values
-   for the columns that you changed.
+3. **Look at the rows.** Query the built models by name, with the macros:
+   `make -s query Q="summarize from matches"`. The result is CSV. Check
+   null counts, ranges and distinct values for the columns that you changed.
 4. **Check what built a table.** Each table stores the SQL that built it and
    the git commit:
    `duckdb -c "select decode(key), decode(value) from parquet_kv_metadata('tables/x.parquet')"`.

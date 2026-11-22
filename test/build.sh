@@ -97,6 +97,11 @@ rm macros/lookup.sql
 t "deleted macro" "!lookup does not exist"; rm models/uses_lookup.sql
 is "shell" "$(printf ".mode list\n.headers off\nselect count(*) from marts.revenue, staging.orders;" | $MAKE -s shell)" 6
 is "shell has macros" "$(printf ".mode list\n.headers off\nselect cents(1.5);" | $MAKE -s shell)" 150
+is "query" "$($MAKE -s query Q='select count(*) n from marts.revenue, staging.orders')" "n
+6"
+is "query has macros" "$(Q='select cents(1.5) c' $MAKE -s query)" "c
+150"
+$MAKE -s query Q='from nope' >/dev/null 2>&1; is "query fails" $? 2
 touch models/customers.sql
 t "silent" "" -s
 touch models/customers.sql

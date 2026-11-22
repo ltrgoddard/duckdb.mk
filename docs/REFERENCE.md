@@ -72,6 +72,7 @@ rebuild a model: run `make -B` on the models it applies to.
 | `test`                   | Build the models that tests need, then run all tests |
 | `test/<path>`            | Run one test                                         |
 | `shell`                  | Open DuckDB with the macros and a view of each built model; build nothing |
+| `query`                  | Run the query in `Q` as `shell` would, print CSV; build nothing |
 | `inspect`                | Open the inspector and log its queries; build nothing |
 | `clean`                  | Remove `$(BUILD)`                                    |
 

@@ -20,7 +20,7 @@ recheck = $(if $(filter-out FORCE,$?)$(findstring B,$(flags)),,$(if $($@.sources
 
 all:
 clean: ; rm -rf $(BUILD)
-.PHONY: all test shell inspect clean FORCE
+.PHONY: all test shell query inspect clean FORCE
 .DELETE_ON_ERROR:
 
 ifneq ($(filter-out clean,$(or $(MAKECMDGOALS),all)),)
@@ -47,9 +47,13 @@ $(filter-out %.parquet,$(models)): $(wildcard macros) $(macros)
 $(tests): test/%: tests/%.sql $(macros)
 	@$(run) "$$PRELUDE" -c "$$ASSERT ($(sql)$$PASS"
 
-shell inspect: export VIEWS = $(foreach m,$(models),$(if $(wildcard $m),$($m.view)))
+shell query inspect: export VIEWS = $(foreach m,$(models),$(if $(wildcard $m),$($m.view)))
 shell:
 	@$(DUCKDB) $(macros:%=-cmd '.read %') -cmd "$$VIEWS"
+query:
+	@test -n "$$Q" || { echo 'give the query: make query Q="from x"'; exit 1; }
+	@$(DUCKDB) -init /dev/null -bail -csv -cmd '.output /dev/null' \
+	  $(macros:%=-cmd '.read %') -cmd "$$VIEWS" -cmd '.output' -c "$$Q"
 
 # cat gives duckdb its input, so that it stays, with no prompt, until that ends
 inspect: $(page)
