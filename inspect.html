@@ -347,13 +347,12 @@ const operator = (c, e) => {
   const a = args(e), name = e.function_name, [l, r] = a.map(y => op(c, y))
   if (name in LIKES) return like(c, e, false)
   if (a.length === 1) return w`${name}${l}`
-  if (name === "||") return join(a.map(y => op(c, y)), " followed by ")
   if (name === "->" || name === "->>") {
     const k = str(a[1])
     return k == null ? w`item ${r} of ${l}` : k.replace(/^\$\.?/, "")
       ? w`the ${k.replace(/^\$\.?/, "")} in ${l}` : l
   }
-  return w`${l} ${name} ${r}`
+  return join(a.map(y => op(c, y)), ` ${name} `)
 }
 // a call, by its phrase or as written, with its filter and its order
 const call = (c, e) => {
