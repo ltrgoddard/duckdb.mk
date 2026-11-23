@@ -347,12 +347,13 @@ const operator = (c, e) => {
   const a = args(e), name = e.function_name, [l, r] = a.map(y => op(c, y))
   if (name in LIKES) return like(c, e, false)
   if (a.length === 1) return w`${name}${l}`
+  if (name === "||") return join(a.map(y => op(c, y)), " followed by ")
   if (name === "->" || name === "->>") {
     const k = str(a[1])
     return k == null ? w`item ${r} of ${l}` : k.replace(/^\$\.?/, "")
       ? w`the ${k.replace(/^\$\.?/, "")} in ${l}` : l
   }
-  return join(a.map(y => op(c, y)), ` ${name} `)
+  return w`${l} ${name} ${r}`
 }
 // a call, by its phrase or as written, with its filter and its order
 const call = (c, e) => {
@@ -1085,10 +1086,13 @@ const open = async node => {
       if (current !== node) return
     }
     const plan = explain(tree.statements[0].node, ref)
-    // each step from the first keyword of its clause, as tokens mark it
-    const starts = tokens.map(t => t.start)
+    // each step from the first keyword of its clause, as tokens mark it;
+    // duckdb counts in bytes, the page in characters
+    const bytes = new TextEncoder().encode(text)
+    const u = n => new TextDecoder().decode(bytes.subarray(0, n)).length
+    const starts = tokens.map(t => u(t.start))
     const at = plan.map(s => {
-      let i = starts.findLastIndex(p => p <= s.at)
+      let i = starts.findLastIndex(p => p <= u(s.at))
       while (i > 0 && tokens[i - 1].token_type === "KEYWORD") i--
       return i < 0 ? Infinity : starts[i]
     })
@@ -1100,7 +1104,7 @@ const open = async node => {
         return r
       })))
     for (const [type, ts] of Object.entries(Object.groupBy(tokens.map((t, i) =>
-      [t.start, starts[i + 1] ?? text.length, t.token_type]), t => t[2])))
+      [starts[i], starts[i + 1] ?? text.length, t.token_type]), t => t[2])))
       paint(type, ts)
     const pick = i => {
       steps.querySelectorAll(".on").forEach(e => e.classList.remove("on"))
