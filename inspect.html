@@ -138,7 +138,8 @@ td {
 }
 td.num { text-align: right; }
 td:empty::after { content: "null"; color: var(--mute); }
-/* on a narrow screen, the panes one above another, and the list last */
+/* on a narrow screen, the panes one above another, and the list last, in
+   columns */
 @media (max-width: 860px) {
   body {
     height: auto; grid: "head" auto "q" auto "rows" 80vh "nav" auto /
@@ -146,7 +147,12 @@ td:empty::after { content: "null"; color: var(--mute); }
   }
   header, body.all header { grid-row: auto; max-height: none; }
   #rows { border: 0; border-top: 1px solid var(--line); }
-  nav { border: 0; border-top: 1px solid var(--line); }
+  nav { border: 0; border-top: 1px solid var(--line); columns: 11rem; }
+  nav input, nav a.schema {
+    display: block; column-span: all; margin-bottom: 16px;
+  }
+  nav h2 { margin-top: 0; break-after: avoid; }
+  nav section { margin-bottom: 16px; }
   .drag { display: none; }
 }
 </style>
