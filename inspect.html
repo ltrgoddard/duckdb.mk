@@ -125,7 +125,9 @@ pre {
 }
 .via { color: var(--fg); }
 .err { color: var(--err); white-space: pre-wrap; font: 12.5px var(--mono); }
-table { border-collapse: collapse; font: 12.5px var(--mono); }
+table {
+  min-width: 100%; border-collapse: collapse; font: 12.5px var(--mono);
+}
 th {
   position: sticky; top: var(--bar); background: var(--bg); text-align: left;
   font-weight: 500;
