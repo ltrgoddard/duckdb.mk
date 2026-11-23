@@ -80,7 +80,9 @@ header p { margin: 4px 0; max-width: 80ch; }
 header .note, header code { color: var(--mute); }
 header .warn { color: var(--err); }
 code, pre { font: 12.5px/1.5 var(--mono); }
-svg { display: block; margin-top: 12px; font: 12px var(--mono); }
+svg {
+  display: block; margin-top: 12px; font: 12px var(--mono); overflow: visible;
+}
 svg path { fill: none; stroke: var(--mute); opacity: .5; }
 svg:has(a:hover) path { opacity: .2; }
 svg:has(a:hover) path.on { stroke: var(--hi); opacity: 1; stroke-width: 2; }
