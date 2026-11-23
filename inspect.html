@@ -1026,7 +1026,7 @@ const rows = async sql => {
 const [{dir}] = await all("select parse_filename(getenv('PWD')) dir")
 const narrow = matchMedia("(max-width: 860px)")
 const open = async node => {
-  current = node
+  current = node, running++
   for (const [n, a] of links) a.classList.toggle("on", n === node)
   schema.classList.toggle("on", !node)
   document.body.classList.toggle("all", !node)
@@ -1036,21 +1036,23 @@ const open = async node => {
       {style: `--c: ${colour(groups[g][0])}`}, g))), lineage(nodes))
   narrow.matches ? scrollTo(0, 0)
     : links.get(node).scrollIntoView({block: "nearest"})
+  status.replaceChildren("Running…"), grid.replaceChildren()
   const [lead = "", ...rest] = node.content.match(/^(\s*--.*\n)*/)[0]
     .split(/^\s*--\s*$/m)
   const prose = s => s.replace(/^\s*-- ?/gm, "").trim()
-  const [stored] = node.built ? await all(`select decode(value) v
-    from parquet_kv_metadata(${lit(node.out)}) where decode(key) = 'sql'
-    limit 1`) : []
+  // shown at once; the check of its table's sql waits for duckdb
+  const old = $("p", {class: "warn", hidden: true}, "Its table is from an " +
+    "earlier version of its file: make rebuilds it.")
+  node.built && all(`select decode(value) v from parquet_kv_metadata(${lit(
+    node.out)}) where decode(key) = 'sql' limit 1`)
+    .then(([s]) => old.hidden = !s || s.v === node.content)
   head.replaceChildren($("div", {}, $("h1", {}, label(node)),
     prose(lead) && $("p", {}, prose(lead)),
     rest.length ? $("p", {class: "note"}, prose(rest.join(""))) : null,
     $("code", {}, node.file),
     node.kind === "models" && !node.built ? $("p", {class: "warn"},
       "Not built: make builds its table.") : null,
-    stored && stored.v !== node.content ? $("p", {class: "warn"}, "Its " +
-      "table is from an earlier version of its file: make rebuilds it.")
-      : null,
+    old,
     lineage(nodes.filter(n => reach(node, "target", "dep").has(n.id) ||
       reach(node, "dep", "target").has(n.id)), node)))
   // the sql as last run, and the buttons: run if it has changed since,
@@ -1071,6 +1073,7 @@ const open = async node => {
       all(`select json_serialize_sql(${lit(text)}, skip_null := true,
         skip_empty := true)::varchar ast`),
       all(`from sql_tokenize(${lit(text)})`)])
+    if (current !== node) return
     const tree = JSON.parse(ast)
     if (tree.statements?.length !== 1) return rows(Promise.reject(Error(
       tree.error_message ?? "Expected one SELECT statement.")))
@@ -1080,6 +1083,7 @@ const open = async node => {
         where target = ${lit(node.id)}` : `insert or replace into
         plan.main.draft values (${lit(node.id)}, ${lit(text)})`)
       await sync(node)
+      if (current !== node) return
     }
     const plan = explain(tree.statements[0].node, ref)
     // each step from the first keyword of its clause, as tokens mark it
