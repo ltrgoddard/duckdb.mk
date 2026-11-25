@@ -51,6 +51,15 @@ nav a {
 }
 nav a::before, .legend span::before { content: "▎"; color: var(--c); }
 nav a.schema { margin-top: 12px; }
+nav .sub {
+  display: grid; grid-template-rows: 0fr; transition: grid-template-rows .15s;
+}
+nav .sub > div { min-height: 0; overflow: hidden; }
+nav div:hover > .sub, nav a.on + .sub, nav .sub.open {
+  grid-template-rows: 1fr; transition-delay: .3s;
+}
+nav .sub a { padding-left: 1.2em; color: var(--mute); }
+nav .sub a::before { content: none; }
 nav a.schema::before { content: none; }
 .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font: 12px var(--mono);
   color: var(--mute); }
@@ -89,7 +98,8 @@ svg:has(a:hover) path.on { stroke: var(--hi); opacity: 1; stroke-width: 2; }
 svg rect { fill: var(--panel); stroke: var(--line); }
 svg a:hover rect, svg .on rect { stroke: var(--hi); }
 svg text { fill: var(--fg); }
-svg text.off { fill: var(--mute); }
+svg text.off, svg .sub text { fill: var(--mute); }
+svg .sub rect { fill: var(--bg); stroke-dasharray: 3 2; }
 #q, #rows { overflow: auto; padding: 16px 20px; }
 #q { grid-area: q; }
 #rows { grid-area: rows; }
@@ -105,6 +115,7 @@ ol > li {
 }
 ol > li:hover { border-color: var(--mute); }
 ol > li.on { border-color: var(--hi); background: var(--panel); }
+ol > li.uses { border-color: var(--name); }
 ol ul { margin: 2px 0 0; padding-left: 1.2em; list-style: none; }
 .name { color: var(--name); }
 .s, .place { color: var(--s); overflow-wrap: anywhere; }
@@ -544,9 +555,28 @@ const made = (c, n, name, cte = false) => {
   const ctes = c.ctes, inner = plan(c, n, 1)
   name ??= String.fromCharCode(65 + c.letters++)
   c.names.add(name.toLowerCase())
-  c.made.push({depth: 0, text: w`Make table ${mark("name", name)}:`,
+  c.made.push({depth: 0, text: w`Make table ${mark("name", name)}:`, name,
     query: scoped(cte ? named(name) : n, ctes), at: loc(n)}, ...inner)
   return [mark("name", name)]
+}
+// the tables that a plan makes, and then its query: each part's first step,
+// its name (none for the query), the models that it reads and the parts
+// before it that it reads (by their place). no parts if it makes none
+const reads = s => [s.text, ...s.lines ?? []].flat()
+const parts = plan => {
+  const ps = []
+  if (plan.some(s => s.name)) for (const [i, s] of plan.entries()) {
+    if (!s.depth) ps.push({name: s.name, at: i, models: new Set, tables:
+      new Set})
+    const p = ps.at(-1)
+    for (const x of reads(s)) {
+      if (x.kind === "model") p.models.add(x.text)
+      const k = x.kind === "name" ? ps.findLastIndex(q => q !== p &&
+        q.name.toLowerCase() === x.text.toLowerCase()) : -1
+      if (k >= 0) p.tables.add(k)
+    }
+  }
+  return ps
 }
 // the steps of a query, at a depth: its ctes made first, then its own
 const plan = (c, n, depth) => {
@@ -779,7 +809,9 @@ const nodes = await all(`
     union
     select e.target, d.d + 1 from depth d join plan.main.edge e on e.dep = d.t)
   select s.target id, s.kind, s.schema, s.name, s.file, s.content, s.out,
-    d.d::int depth, b.n is not null built, f.sql draft
+    d.d::int depth, b.n is not null built, f.sql draft,
+    json_serialize_sql(coalesce(f.sql, s.content), skip_null := true,
+      skip_empty := true)::varchar ast
   from plan.main.src s join depth d on d.t = s.target
   left join plan.main.built b on b.s = s.schema and b.n = s.name
   left join plan.main.draft f on f.target = s.target
@@ -796,6 +828,10 @@ const refs = new Map(nodes.filter(n => n.kind === "models").flatMap(n =>
 const ref = name => refs.get(name.toLowerCase()) && label(refs.get(name
   .toLowerCase()))
 const byLabel = Object.fromEntries(nodes.map(n => [label(n), n]))
+// a node's parts, from its sql as it was when the page opened
+for (const n of nodes) try {
+  n.parts = parts(explain(JSON.parse(n.ast).statements[0].node, ref))
+} catch { n.parts = [] }
 
 // the views, after a change to a node: a changed model, and each model
 // after one, is a table in plan.live, made from its sql (as changed, or its
@@ -850,8 +886,14 @@ const search = $("input", {type: "search", placeholder: "Filter",
 const links = new Map(nodes.map(n => [n, $("a", {href: href(n),
   class: n.built || n.kind === "tests" ? "" : "off",
   style: `--c: ${colour(n)}`}, n.name)]))
+// under each, the tables that its query makes, shown while the pointer is
+// on it, while it is in view or while the filter finds one
+const subs = new Map(nodes.map(n => [n, $("div", {class: "sub"})]))
+const nest = n => subs.get(n).replaceChildren($("div", {}, n.parts
+  .slice(0, -1).map(p => $("a", {href: `${href(n)}:${p.name}`}, p.name))))
+nodes.forEach(nest)
 const list = order.map(g => $("section", {}, $("h2", {}, g),
-  groups[g].map(n => links.get(n))))
+  groups[g].map(n => $("div", {}, links.get(n), subs.get(n)))))
 const head = $("header"), steps = $("ol")
 // the sql can be changed, and run with its button or with cmd or ctrl and
 // enter: the steps and the rows are then of the sql as changed, and so are
@@ -920,9 +962,12 @@ document.body.append(
 
 search.oninput = () => {
   const q = search.value.toLowerCase()
-  for (const [n, a] of links) a.hidden = !label(n).includes(q)
-  for (const s of list) s.hidden = ![...s.querySelectorAll("a")]
-    .some(a => !a.hidden)
+  for (const [n, a] of links) {
+    const hit = !!q && n.parts.some(p => p.name?.toLowerCase().includes(q))
+    a.parentElement.hidden = !hit && !label(n).includes(q)
+    subs.get(n).classList.toggle("open", hit)
+  }
+  for (const s of list) s.hidden = !s.querySelector(":scope > :not([hidden])")
 }
 // j or down opens the next node in the list as it is shown, k or up the one
 // before
@@ -930,17 +975,20 @@ document.onkeydown = e => {
   const step = {j: 1, ArrowDown: 1, k: -1, ArrowUp: -1}[e.key]
   if (!step || e.target === search || e.target === sql || e.metaKey ||
     e.ctrlKey) return
-  const shown = list.flatMap(s => [...s.querySelectorAll("a:not([hidden])")])
+  const shown = list.flatMap(s => [...s.querySelectorAll(
+    ":scope > div:not([hidden]) > a")])
   const at = shown.findIndex(a => a.classList.contains("on"))
   shown[Math.max(0, Math.min(shown.length - 1, at + step))]?.click()
   e.preventDefault()
 }
 
-// a phrase from words.js: a model linked, a name, a place and a literal
-// set apart
+// a phrase from words.js: a model linked, a name linked to the step that
+// makes it, a place and a literal set apart
 const phrase = p => p.map(x => typeof x === "string" ? x
   : x.kind === "model" && byLabel[x.text]
   ? $("a", {href: href(byLabel[x.text])}, x.text)
+  : x.kind === "name" ? $("a", {class: "name", href: `${href(current)}:${
+    x.text}`, onclick: e => e.stopPropagation()}, x.text)
   : $("span", {class: x.kind}, x.text))
 
 // the lineage: nodes in columns by depth, by schema within a column; a
@@ -952,31 +1000,53 @@ const reach = (node, from, to) => {
     if (e[from] === id && byId[e[to]]) seen.add(e[to])
   return seen
 }
+// in a node's own, the tables that its query makes are between the nodes
+// that they read and it, each in a column after those that it reads
 const lineage = (shown, node) => {
+  const ps = node?.parts ?? [], own = ps.slice(0, -1), ld = []
+  const id = i => i < own.length ? `${node.id}:${i}` : node.id
+  own.forEach((p, i) => ld[i] = Math.max(-1, ...[...p.tables]
+    .map(k => ld[k])) + 1)
+  const more = own.length && Math.max(...ld) + 1
   const depths = [...new Set(shown.map(n => n.depth))].sort((a, b) => a - b)
-  const cols = depths.map(d => shown.filter(n => n.depth === d)
-    .sort((a, b) => order.indexOf(a.schema) - order.indexOf(b.schema) ||
-      label(a).localeCompare(label(b))))
-  const w = 16 + 7.3 * Math.max(...shown.map(n => label(n).length)), h = 22
-  const xy = Object.fromEntries(cols.flatMap((col, x) => col.map((n, y) =>
-    [n.id, [x * (w + 48), y * (h + 8)]])))
+  const k = depths.indexOf(node?.depth), col = n => depths.indexOf(n.depth)
+  const boxes = [...[...shown].sort((a, b) => order.indexOf(a.schema) -
+    order.indexOf(b.schema) || label(a).localeCompare(label(b))).map(n =>
+    ({id: n.id, text: label(n), href: href(n), n, x: col(n) + (col(n) >= k
+      ? more : 0)})), ...own.map((p, i) => ({id: id(i), text: p.name,
+    href: `${href(node)}:${p.name}`, at: p.at, x: k + ld[i]}))]
+  const ys = [], at = {}
+  for (const b of boxes) b.y = ys[b.x] = (ys[b.x] ?? -1) + 1, at[b.id] = b
+  // a model that the parts read is joined to them, not to the node
+  const lines = [...edges.filter(e => at[e.dep] && at[e.target] &&
+    !(own.length && e.target === node.id && ps.some(p =>
+      p.models.has(label(byId[e.dep]))))).map(e => [e.dep, e.target]),
+    ...ps.flatMap((p, i) => [...[...p.models].filter(l => at[byLabel[l]
+      ?.id]).map(l => [byLabel[l].id, id(i)]), ...[...p.tables]
+      .map(t => [id(t), id(i)])])]
+  const w = 16 + 7.3 * Math.max(...boxes.map(b => b.text.length)), h = 22
+  const xy = b => [b.x * (w + 48), b.y * (h + 8)]
   // a node's lines, marked while it is under the pointer
   const light = id => svg.querySelectorAll("path").forEach(p =>
     p.classList.toggle("on", p.dataset.ends.split(" ").includes(id)))
-  const svg = $("svg", {width: cols.length * (w + 48) - 48,
-    height: Math.max(...cols.map(c => c.length)) * (h + 8) - 8},
-    edges.filter(e => xy[e.dep] && xy[e.target]).map(e => {
-      const [x0, y0] = xy[e.dep], [x1, y1] = xy[e.target], m = (x0 + w + x1) / 2
-      return $("path", {"data-ends": `${e.dep} ${e.target}`, d: `M${x0 + w} ${
+  const svg = $("svg", {width: (Math.max(...boxes.map(b => b.x)) + 1) *
+    (w + 48) - 48, height: Math.max(...ys) * (h + 8) + h},
+    lines.map(([d, t]) => {
+      const [x0, y0] = xy(at[d]), [x1, y1] = xy(at[t]), m = (x0 + w + x1) / 2
+      return $("path", {"data-ends": `${d} ${t}`, d: `M${x0 + w} ${
         y0 + h / 2}C${m} ${y0 + h / 2} ${m} ${y1 + h / 2} ${x1} ${y1 + h / 2}`})
     }),
-    shown.map(n => $("svg:a", {href: href(n), class: n === node ? "on" : "",
-      onpointerenter: () => light(n.id), onpointerleave: () => light()},
-      $("rect", {x: xy[n.id][0], y: xy[n.id][1], width: w, height: h}),
-      $("rect", {x: xy[n.id][0], y: xy[n.id][1], width: 3, height: h,
-        style: `fill: ${colour(n)}; stroke: none`}),
-      $("text", {x: xy[n.id][0] + 10, y: xy[n.id][1] + 15,
-        class: n.built || n.kind === "tests" ? "" : "off"}, label(n)))))
+    boxes.map(b => {
+      const [x, y] = xy(b), n = b.n
+      return $("svg:a", {href: b.href, class: n ? n === node ? "on" : ""
+        : "sub", "data-at": b.at ?? "", onpointerenter: () => light(b.id),
+        onpointerleave: () => light()},
+        $("rect", {x, y, width: w, height: h}),
+        n && $("rect", {x, y, width: 3, height: h,
+          style: `fill: ${colour(n)}; stroke: none`}),
+        $("text", {x: x + 10, y: y + 15, class: !n || n.built ||
+          n.kind === "tests" ? "" : "off"}, b.text))
+    }))
   return svg
 }
 
@@ -1036,8 +1106,9 @@ const rows = async sql => {
 // every node, and its schemas' colours
 const [{dir}] = await all("select parse_filename(getenv('PWD')) dir")
 const narrow = matchMedia("(max-width: 860px)")
+let jump
 const open = async node => {
-  current = node, running++
+  current = node, running++, jump = null
   for (const [n, a] of links) a.classList.toggle("on", n === node)
   schema.classList.toggle("on", !node)
   document.body.classList.toggle("all", !node)
@@ -1057,15 +1128,16 @@ const open = async node => {
   node.built && all(`select decode(value) v from parquet_kv_metadata(${lit(
     node.out)}) where decode(key) = 'sql' limit 1`)
     .then(([s]) => old.hidden = !s || s.v === node.content)
+  const draw = () => lineage(nodes.filter(n => reach(node, "target", "dep")
+    .has(n.id) || reach(node, "dep", "target").has(n.id)), node)
+  let graph = draw()
   head.replaceChildren($("div", {}, $("h1", {}, label(node)),
     prose(lead) && $("p", {}, prose(lead)),
     rest.length ? $("p", {class: "note"}, prose(rest.join(""))) : null,
     $("code", {}, node.file),
     node.kind === "models" && !node.built ? $("p", {class: "warn"},
       "Not built: make builds its table.") : null,
-    old,
-    lineage(nodes.filter(n => reach(node, "target", "dep").has(n.id) ||
-      reach(node, "dep", "target").has(n.id)), node)))
+    old, graph))
   // the sql as last run, and the buttons: run if it has changed since,
   // revert if it is not the file's
   let shown
@@ -1097,6 +1169,7 @@ const open = async node => {
       if (current !== node) return
     }
     const plan = explain(tree.statements[0].node, ref)
+    node.parts = parts(plan), nest(node), graph.replaceWith(graph = draw())
     // each step from the first keyword of its clause, as tokens mark it;
     // duckdb counts in bytes, the page in characters
     const bytes = new TextEncoder().encode(text)
@@ -1117,9 +1190,22 @@ const open = async node => {
     for (const [type, ts] of Object.entries(Object.groupBy(tokens.map((t, i) =>
       [starts[i], starts[i + 1] ?? text.length, t.token_type]), t => t[2])))
       paint(type, ts)
+    // a step, and the address of the table that it makes, if it makes
+    // one; the steps that read that table are marked
     const pick = i => {
-      steps.querySelectorAll(".on").forEach(e => e.classList.remove("on"))
-      steps.children[i]?.classList.add("on")
+      const name = plan[i]?.name, a = name ? `${href(node)}:${name}`
+        : href(node)
+      history.replaceState(null, "", a)
+      subs.get(node).querySelectorAll("a").forEach(e =>
+        e.classList.toggle("on", e.getAttribute("href") === a))
+      graph.querySelectorAll(".sub").forEach(e =>
+        e.classList.toggle("on", e.dataset.at === String(i)))
+      ;[...steps.children].forEach((e, j) => {
+        e.classList.toggle("on", j === i)
+        e.classList.toggle("uses", !!name && j !== i && reads(plan[j])
+          .some(x => x.kind === "name" && x.text.toLowerCase() ===
+            name.toLowerCase()))
+      })
       paint("on", i < 0 || at[i] === Infinity ? [] : [[at[i], end(i)]])
       rows(all(`select json_deserialize_sql(${lit(i < 0 ? ast
         : plan[i].query)}::json) q`).then(([{q}]) => q))
@@ -1131,7 +1217,13 @@ const open = async node => {
     sql.onclick = () => read() === shown && getSelection()
       .isCollapsed && pick(at.lastIndexOf(Math.max(...at.filter(a =>
         a <= caret()))))
-    pick(-1)
+    // the step of the table that the address names, else all of it
+    jump = name => {
+      const i = plan.findIndex(s => s.name?.toLowerCase() ===
+        name.toLowerCase())
+      pick(i), steps.children[i]?.scrollIntoView({block: "nearest"})
+    }
+    jump(at3())
   }
   sql.oninput = () => (node.draft = read(), mark())
   sql.onkeydown = e => {
@@ -1143,8 +1235,11 @@ const open = async node => {
   show(node.draft ?? node.content)
 }
 
+// the address: #<port>:<token>:<node>:<table that its query makes>
+const at3 = () => decodeURI(location.hash).split(":").slice(3).join(":")
 const route = () => {
-  open(byId[decodeURI(location.hash).split(":").slice(2).join(":")])
+  const node = byId[decodeURI(location.hash).split(":")[2]]
+  node && node === current && jump ? jump(at3()) : open(node)
 }
 onhashchange = route
 route()

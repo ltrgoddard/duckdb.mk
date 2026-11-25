@@ -292,6 +292,18 @@ built, and its SQL and steps can still be read.
   is highlighted in both views. Steps come from DuckDB's parsed SQL:
   `json_serialize_sql` supplies the syntax tree, and `json_deserialize_sql`
   turns the selected portion back into a query.
+- A query's CTEs and subqueries are tables that it makes first, each a step
+  named by its CTE or alias (else a letter). Click such a name in a step to
+  go to the step that makes it. When that step is selected, the steps that
+  read its table are marked.
+- Each of these tables has an address, the node's address followed by
+  `:` and its name, which selects its step. The back button returns to the
+  step before.
+- In the list, a node's tables show below it while the pointer is on it or
+  while it is open. The filter also finds a node by the name of one of its
+  tables.
+- In a node's lineage, its tables are dashed boxes between the models that
+  they read and the node.
 
 ### Editing SQL
 
