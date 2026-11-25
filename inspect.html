@@ -1157,7 +1157,15 @@ const open = async node => {
     const [[{ast}], tokens] = await Promise.all([
       all(`select json_serialize_sql(${lit(text)}, skip_null := true,
         skip_empty := true)::varchar ast`),
-      all(`from sql_tokenize(${lit(text)})`)])
+      // each token's depth in brackets, and whether it can begin a clause:
+      // a keyword that cannot be a name
+      all(`select start, token_type, word, sum(case word when '(' then 1
+          when ')' then -1 else 0 end) over (order by start)::int depth,
+        token_type = 'KEYWORD' and keyword_category is distinct from
+          'unreserved' lead
+        from sql_tokenize(${lit(text)})
+        left join duckdb_keywords() on lower(word) = keyword_name
+        order by start`)])
     if (current !== node) return
     const tree = JSON.parse(ast)
     if (tree.statements?.length !== 1) return rows(Promise.reject(Error(
@@ -1177,36 +1185,26 @@ const open = async node => {
     const bytes = new TextEncoder().encode(text)
     const u = n => new TextDecoder().decode(bytes.subarray(0, n)).length
     const starts = tokens.map(t => u(t.start))
-    const at = plan.map(s => {
-      let i = starts.findLastIndex(p => p <= u(s.at))
-      while (i > 0 && tokens[i - 1].token_type === "KEYWORD") i--
-      return i < 0 ? Infinity : starts[i]
+    const first = plan.map(s => {
+      let i = s.at < Infinity ? starts.findLastIndex(p => p <= u(s.at)) : -1
+      while (i > 0 && tokens[i - 1].lead) i--
+      return i
     })
-    // a step's clause ends where the next step's begins, but for those
-    // within it, or at the bracket around it; a table that it makes, at
-    // that bracket. it is marked less the commas, spaces
-    // and closing brackets after it, a line at a time, from the first
-    // character to the last on each
-    const close = p => {
-      const open = []
-      for (const m of text.matchAll(
-        /'(?:[^']|'')*'|"[^"]*"|--.*|\/\*[\s\S]*?\*\/|[()]/g))
-        if (m[0] === "(") open.push(m.index)
-        else if (m[0] === ")" && open.pop() < p && m.index >= p) return m.index
-      return text.length
-    }
-    const end = i => {
-      const k = plan.findIndex((s, j) => j > i && s.depth <= plan[i].depth)
-      return plan[i].name ? close(at[i]) : Math.min(close(at[i]), ...at
-        .filter((a, j) => a > at[i] && (j <= i || k >= 0 && j >= k)))
-    }
-    const span = (a, b) => {
-      let s = text.slice(a, b)
-      for (let t; t !== s;) t = s, s = s.replace(/[\s,;]+$/, ""),
-        s = /\)$/.test(s) && s.split("(").length < s.split(")").length
-          ? s.slice(0, -1) : s
-      return [...s.matchAll(/\S(.*\S)?/g)].map(m => [a + m.index,
-        a + m.index + m[0].length])
+    const at = first.map(i => i < 0 ? Infinity : starts[i])
+    // to the bracket that closes around it, or to where another step at its
+    // depth begins, but for those within it; less a comma after it, and
+    // marked a line at a time, from the first character to the last
+    const span = i => {
+      const a = first[i], d = tokens[a]?.depth, inner = j => j > i &&
+        plan.slice(i + 1, j + 1).every(s => s.depth > plan[i].depth)
+      const ends = new Set(first.filter((f, j) => !inner(j) &&
+        tokens[f]?.depth === d))
+      let b = a + 1
+      while (tokens[b]?.depth >= d && !ends.has(b)) b++
+      while (tokens[b - 1]?.word === ",") b--
+      return a < 0 ? [] : [...text.slice(starts[a], starts[b] ?? text.length)
+        .matchAll(/\S(.*\S)?/g)].map(m => [starts[a] + m.index,
+          starts[a] + m.index + m[0].length])
     }
     const paint = (name, spans) => CSS.highlights?.set(name, new Highlight(
       ...spans.map(([a, b]) => {
@@ -1233,7 +1231,7 @@ const open = async node => {
           .some(x => x.kind === "name" && x.text.toLowerCase() ===
             name.toLowerCase()))
       })
-      paint("on", i < 0 || at[i] === Infinity ? [] : span(at[i], end(i)))
+      paint("on", i < 0 ? [] : span(i))
       rows(all(`select json_deserialize_sql(${lit(i < 0 ? ast
         : plan[i].query)}::json) q`).then(([{q}]) => q))
     }
