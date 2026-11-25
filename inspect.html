@@ -1158,11 +1158,19 @@ const open = async node => {
       all(`select json_serialize_sql(${lit(text)}, skip_null := true,
         skip_empty := true)::varchar ast`),
       // each token's depth in brackets, and whether it can begin a clause:
-      // a keyword that cannot be a name
-      all(`select start, token_type, word, sum(case word when '(' then 1
-          when ')' then -1 else 0 end) over (order by start)::int depth,
-        token_type = 'KEYWORD' and keyword_category is distinct from
-          'unreserved' lead
+      // a keyword that cannot be a name. a keyword that can, and that the
+      // query has as a name, is one: sql_tokenize can take it for a keyword
+      all(`with names as (select distinct lower(value ->> '$') n
+          from json_tree(json_serialize_sql(${lit(text)}))
+          where regexp_matches(fullkey,
+            '\\.(alias|key|column_names|column_name_alias)(\\[\\d+\\])?$')
+            and type = 'VARCHAR')
+        select start, if(keyword_category = 'unreserved' and lower(word) in
+          (from names), 'IDENTIFIER', token_type) token_type, word,
+          sum(case word when '(' then 1 when ')' then -1 else 0 end)
+            over (order by start)::int depth,
+          token_type = 'KEYWORD' and keyword_category is distinct from
+            'unreserved' lead
         from sql_tokenize(${lit(text)})
         left join duckdb_keywords() on lower(word) = keyword_name
         order by start`)])
