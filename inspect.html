@@ -282,7 +282,7 @@ const FILE_KINDS = {csv: "CSV file", tsv: "CSV file", parquet: "Parquet file",
 
 const args = e => e.arguments?.map(a => a.expression) ?? e.children ?? []
 const str = e => e?.type === "VALUE_CONSTANT" && e.literal.kind === "STRING"
-  ? e.literal.text : null
+  ? e.literal.text ?? "" : null
 
 // an expression in words
 const ex = (c, e) => {
@@ -291,7 +291,7 @@ const ex = (c, e) => {
     {current_date: "today", current_timestamp: "now"}[e.column_names[0]] ||
     e.column_names.join(".")
   if (t === "VALUE_CONSTANT") {
-    const {kind, text} = e.literal
+    const {kind, text = ""} = e.literal
     return kind === "NULL_LITERAL" ? "no value" : kind === "STRING"
       ? [mark("s", `'${text}'`)] : kind === "BOOLEAN" ? text : [mark("n", text)]
   }
@@ -341,7 +341,8 @@ const negatable = (c, e, not = false) => {
         : w`either ${l[0]} or ${l[1]}` : w`${not ? "not " : ""}${l[0]}`}`
   }
   if (t === "SUBQUERY") {
-    const name = made(c, e.subquery.node)
+    const q = e.subquery.node
+    const name = plain(q) ? table(c, q.from_table) : made(c, q)
     return e.subquery_type === "EXISTS"
       ? w`there are ${not ? "no " : ""}rows in ${name}`
       : e.subquery_type === "ANY"

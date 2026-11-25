@@ -56,6 +56,7 @@ select x like '%a', x not like 'a%', coalesce(a, b, 0) z, case when x > 1 then '
 from (values (1, 'a'), (2, 'b')) v(n, s) where exists (from top where top.id = v.n) and n not in (select id from top)
 select distinct on (a) a, lag(b) over (order by c) p, sum(b) over () t, avg(b) over (partition by a order by c rows between 2 preceding and current row) m from s.a
 from s.a semi join top on s.a.id = top.id union all select 1, 2 order by 1
+from s.a where id in (from top) and k != ''
 EOF
 cat > show.mjs <<EOF
 import {explain, text} from "./words.mjs"
@@ -133,6 +134,10 @@ Add the rows of:
     - 1
     - 2
 Sort by 1
+Start from s.a
+Keep the rows where:
+  - id is in top
+  - and k ≠ ''
 EOF
 )"
 # each step's query, as duckdb gives it back: the sql of its rows
