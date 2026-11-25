@@ -546,7 +546,7 @@ const explain = (node, ref = () => null) => {
     ctes: []}
   const main = plan(c, node, 0)
   return c.made.length ? [...c.made, {depth: 0, text: ["Then:"],
-    query: scoped(node, []), at: loc(node)}, ...main.map(s =>
+    query: scoped(node, []), at: loc({...node, cte_map: null})}, ...main.map(s =>
     ({...s, depth: s.depth + 1}))] : main
 }
 // a query inside another: a step of its own, made first and named by its
@@ -641,8 +641,9 @@ const part = (c, n, step) => {
   if (t && t.type !== "EMPTY") step(first(c, t), cut(n, "from", t), loc(t))
   for (const j of joins) {
     const [t, x] = join1(c, j)
-    step(t, cut(n, "from", j), j.query_location < 1e15 ? j.query_location
-      : loc(j.right), x)
+    // a lateral join's place is its from's
+    step(t, cut(n, "from", j), j.query_location < 1e15 && j.ref_type !==
+      "CROSS" ? j.query_location : loc(j.right), x)
   }
   if (n.where_clause) filter(c, n, "rows", n.where_clause, "where", step)
   if (n.group_expressions?.length || n.aggregate_handling ===
@@ -1181,7 +1182,32 @@ const open = async node => {
       while (i > 0 && tokens[i - 1].token_type === "KEYWORD") i--
       return i < 0 ? Infinity : starts[i]
     })
-    const end = i => Math.min(...at.filter(a => a > at[i]), text.length)
+    // a step's clause ends where the next step's begins, but for those
+    // within it, or at the bracket around it; a table that it makes, at
+    // that bracket. it is marked less the commas, spaces
+    // and closing brackets after it, a line at a time, from the first
+    // character to the last on each
+    const close = p => {
+      const open = []
+      for (const m of text.matchAll(
+        /'(?:[^']|'')*'|"[^"]*"|--.*|\/\*[\s\S]*?\*\/|[()]/g))
+        if (m[0] === "(") open.push(m.index)
+        else if (m[0] === ")" && open.pop() < p && m.index >= p) return m.index
+      return text.length
+    }
+    const end = i => {
+      const k = plan.findIndex((s, j) => j > i && s.depth <= plan[i].depth)
+      return plan[i].name ? close(at[i]) : Math.min(close(at[i]), ...at
+        .filter((a, j) => a > at[i] && (j <= i || k >= 0 && j >= k)))
+    }
+    const span = (a, b) => {
+      let s = text.slice(a, b)
+      for (let t; t !== s;) t = s, s = s.replace(/[\s,;]+$/, ""),
+        s = /\)$/.test(s) && s.split("(").length < s.split(")").length
+          ? s.slice(0, -1) : s
+      return [...s.matchAll(/\S(.*\S)?/g)].map(m => [a + m.index,
+        a + m.index + m[0].length])
+    }
     const paint = (name, spans) => CSS.highlights?.set(name, new Highlight(
       ...spans.map(([a, b]) => {
         const r = new Range
@@ -1207,7 +1233,7 @@ const open = async node => {
           .some(x => x.kind === "name" && x.text.toLowerCase() ===
             name.toLowerCase()))
       })
-      paint("on", i < 0 || at[i] === Infinity ? [] : [[at[i], end(i)]])
+      paint("on", i < 0 || at[i] === Infinity ? [] : span(at[i], end(i)))
       rows(all(`select json_deserialize_sql(${lit(i < 0 ? ast
         : plan[i].query)}::json) q`).then(([{q}]) => q))
     }
